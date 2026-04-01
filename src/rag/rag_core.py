@@ -1,7 +1,12 @@
 import chromadb
 import ollama
+from pathlib import Path
 
-CLIENT = chromadb.PersistentClient(path="./chroma_data")
+# Ensure the chroma_data folder can be found regardless of which folder the code
+# is run from. Added this to address an error related to the location of chroma_data
+# that arose when I tried to run my rag testing code from the src folder
+_DB_PATH = str(Path(__file__).parent / "chroma_data")
+CLIENT = chromadb.PersistentClient(path=_DB_PATH)
 COLLECTION = CLIENT.get_or_create_collection(name="legal_contracts")
 NUM_RESULTS = 10
 SYS_PROMPT = """
@@ -96,24 +101,34 @@ def list_matching_contracts(party_name: str = None) -> list[dict[str, str]]:
         party_name: Optional. If provided, only return contracts where this party
                     appears in the parties metadata. If omitted, return all contracts.
     """
-    # Retrieve all metadata from the collection. ChromaDB requires fetching 
-    # documents alongside metadata, but we only need the metadata here
-    all_data = COLLECTION.get(include=["metadatas"])
-    metadatas = all_data["metadatas"]
- 
-    # Deduplicate by contract title, keeping the parties metadata
     seen = {}
-    for meta in metadatas:
-        title = meta["contract_title"]
-        if title not in seen:
-            seen[title] = meta.get("parties", "")
- 
+    batch_size = 5000
+    offset = 0
+
+    # Paginate through all metadata to avoid SQLite variable limits
+    while True:
+        batch = COLLECTION.get(
+            include=["metadatas"],
+            limit=batch_size,
+            offset=offset
+        )
+        metadatas = batch["metadatas"]
+
+        if not metadatas:
+            break
+
+        for meta in metadatas:
+            title = meta["contract_title"]
+            if title not in seen:
+                seen[title] = meta.get("parties", "")
+
+        offset += batch_size
+
     contracts = [
         {"contract_title": title, "parties": parties}
         for title, parties in seen.items()
     ]
  
-    # If a party name was provided, filter to contracts involving that party
     if party_name:
         contracts = [
             c for c in contracts

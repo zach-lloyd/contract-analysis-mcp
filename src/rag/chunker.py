@@ -1,9 +1,10 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pathlib import Path
 import json
 import chromadb
 import re
 
-DATASET = "cuad/data/train_separate_questions.json"
+DATASET = "../cuad/data/CUADv1.json"
 
 
 def load_contracts(filename: str) -> list[dict[str, str]]:
@@ -117,12 +118,17 @@ def create_collection(
         batch_size: Optional. Add chunks in batches of the specified size for efficiency.
                     Defaults to 5000.
     """
-    client = chromadb.PersistentClient(path="./chroma_data")
+    # Ensure the chroma_data folder can be found regardless of which folder the code
+    # is run from. Added this to address an error related to the location of chroma_data
+    # that arose when I tried to run my rag testing code from the src folder
+    _db_path = str(Path(__file__).parent / "chroma_data")
+    client = chromadb.PersistentClient(path=_db_path)
     collection = client.get_or_create_collection(name="legal_contracts")
 
     if collection.count() == 0:
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
+            print(f"adding batch {i}")
             collection.add(
                 ids=[f"id{i + j + 1}" for j in range(len(batch))],
                 documents=[chunk["chunk_text"] for chunk in batch],
@@ -138,7 +144,8 @@ def create_collection(
 def main():
     contracts = load_contracts(DATASET)
     chunks = chunk_contracts(contracts)
-    collection = create_collection(chunks)
+    print_sample_chunks(chunks, 3)
+    create_collection(chunks)
 
 
 if __name__ == "__main__":

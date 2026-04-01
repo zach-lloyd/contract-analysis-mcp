@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 # Initialize FastMCP server
 mcp = FastMCP("contracts")
 
+
 @mcp.tool()
 async def ask_contracts(question: str) -> str:
     """
@@ -19,6 +20,7 @@ async def ask_contracts(question: str) -> str:
     """
     return "not implemented"
 
+
 @mcp.tool()
 async def ask_contract(question: str, contract_title: str) -> str:
     """
@@ -31,6 +33,7 @@ async def ask_contract(question: str, contract_title: str) -> str:
         contract_title: The exact title of the contract to search within.
     """
     return "not implemented"
+
 
 @mcp.tool()
 async def compare_contracts(question: str, contract_titles: list[str]) -> str:
@@ -46,6 +49,7 @@ async def compare_contracts(question: str, contract_titles: list[str]) -> str:
         contract_titles: A list of exact contract titles to compare.
     """
     return "not implemented"
+
 
 @mcp.tool()
 async def find_contract_clauses(clause_type: str, contract_title: str = None) -> str:
@@ -63,6 +67,7 @@ async def find_contract_clauses(clause_type: str, contract_title: str = None) ->
     """
     return "not implemented"
 
+
 @mcp.tool()
 async def list_contracts(party_name: str = None) -> str:
     """
@@ -77,8 +82,10 @@ async def list_contracts(party_name: str = None) -> str:
     """
     return "not implemented"
 
+
 def main():
     mcp.run(transport="stdio")
+
 
 if __name__ == "__main__":
     main()
