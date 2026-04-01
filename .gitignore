@@ -207,3 +207,4 @@ marimo/_lsp/
 __marimo__/
 src/chroma_data/
 src/cuad/
+src/rag/chroma_data/
