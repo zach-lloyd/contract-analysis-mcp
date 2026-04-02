@@ -1,4 +1,3 @@
-from typing import Any
 from mcp.server.fastmcp import FastMCP
 from rag_core import (
     generate_answer,
@@ -7,61 +6,115 @@ from rag_core import (
     list_matching_contracts,
     NUM_RESULTS,
 )
+from uuid import uuid4
 import asyncio
 
 # Initialize FastMCP server
 mcp = FastMCP("contracts")
 
+# In-memory session storage for multi-turn conversations. Each session tracks 
+# its own conversation history and retrieved clauses independently.
+conversations: dict[str, list[dict]] = {}
+session_clauses: dict[str, list[str]] = {}
+
+
+def _get_or_create_session(
+    session_id: str = None,
+) -> tuple[str, list[dict], list[str]]:
+    """
+    Retrieve an existing session or create a new one. Centralizes the
+    session-lookup logic so ask_contracts and ask_contract stay clean.
+
+    Args:
+        session_id: An existing session ID, or None to create a new session.
+
+    Returns:
+        A tuple of (session_id, history, clauses).
+    """
+    if not session_id or session_id not in conversations:
+        session_id = str(uuid4())
+        conversations[session_id] = []
+        session_clauses[session_id] = []
+
+    return session_id, conversations[session_id], session_clauses[session_id]
+
 
 @mcp.tool()
-async def ask_contracts(question: str) -> str:
+async def ask_contracts(question: str, session_id: str = None) -> str:
     """
     Ask a question across all contracts in the database. Retrieves the most
     relevant clauses from any contract and uses an LLM to generate an answer
     based on those clauses. Use this when the user's question is not specific
     to a single contract or when they want to search broadly.
 
+    Supports multi-turn conversations: pass the session_id from a previous
+    response to maintain conversation context for follow-up questions. If no
+    session_id is provided, a new session is created.
+
     Args:
         question: The user's natural language question about their contracts.
+        session_id: Optional. The session ID returned by a previous call.
+                    Pass this to continue a conversation with follow-up
+                    questions. If omitted, a new session is created.
     """
     try:
-        # generate_answer is synchronous (calls ollama.chat), so run it in a
-        # thread to avoid blocking the async event loop
-        answer, _, _ = await asyncio.to_thread(generate_answer, question)
+        session_id, history, clauses = _get_or_create_session(session_id)
 
-        return answer
+        answer, history, clauses = await asyncio.to_thread(
+            generate_answer, question, None, clauses, history
+        )
+
+        # Persist the updated state back to the session dicts
+        conversations[session_id] = history
+        session_clauses[session_id] = clauses
+
+        return f"[session_id: {session_id}]\n\n{answer}"
     except Exception as e:
         return f"Error answering question: {e}"
 
 
 @mcp.tool()
-async def ask_contract(question: str, contract_title: str) -> str:
+async def ask_contract(
+    question: str, contract_title: str, session_id: str = None
+) -> str:
     """
     Ask a question about a specific contract. Retrieves the most relevant
     clauses from the named contract and uses an LLM to generate an answer.
     Use this when the user's question targets a single known contract.
 
+    Supports multi-turn conversations: pass the session_id from a previous
+    response to maintain conversation context for follow-up questions. If no
+    session_id is provided, a new session is created.
+
     Args:
         question: The user's natural language question about the contract.
         contract_title: The exact title of the contract to search within.
+        session_id: Optional. The session ID returned by a previous call.
+                    Pass this to continue a conversation with follow-up
+                    questions. If omitted, a new session is created.
     """
     try:
         # Verify the contract exists before querying to give a clear error
         # message rather than an empty or confusing LLM response
         contracts = await asyncio.to_thread(list_matching_contracts)
         known_titles = {c["contract_title"] for c in contracts}
- 
+
         if contract_title not in known_titles:
             return (
                 f"No contract found with title '{contract_title}'. "
                 f"Use the list_contracts tool to see available contract titles."
             )
- 
-        answer, _, _ = await asyncio.to_thread(
-            generate_answer, question, contract_title
+
+        session_id, history, clauses = _get_or_create_session(session_id)
+
+        answer, history, clauses = await asyncio.to_thread(
+            generate_answer, question, contract_title, clauses, history
         )
 
-        return answer
+        conversations[session_id] = history
+        session_clauses[session_id] = clauses
+
+        return f"[session_id: {session_id}]\n\n{answer}"
     except Exception as e:
         return f"Error answering question: {e}"
 
@@ -82,18 +135,18 @@ async def compare_contracts(question: str, contract_titles: list[str]) -> str:
     try:
         if len(contract_titles) < 2:
             return "Please provide at least two contract titles to compare."
- 
+
         # Validate all titles up front
         contracts = await asyncio.to_thread(list_matching_contracts)
         known_titles = {c["contract_title"] for c in contracts}
- 
+
         invalid = [t for t in contract_titles if t not in known_titles]
         if invalid:
             return (
                 f"Contract(s) not found: {', '.join(invalid)}. "
                 f"Use the list_contracts tool to see available contract titles."
             )
- 
+
         answer = await asyncio.to_thread(
             generate_comparison, question, contract_titles
         )
@@ -121,30 +174,30 @@ async def find_contract_clauses(clause_type: str, contract_title: str = None) ->
         if contract_title:
             contracts = await asyncio.to_thread(list_matching_contracts)
             known_titles = {c["contract_title"] for c in contracts}
- 
+
             if contract_title not in known_titles:
                 return (
                     f"No contract found with title '{contract_title}'. "
                     f"Use the list_contracts tool to see available contract titles."
                 )
- 
+
         results = await asyncio.to_thread(
             query_clauses, clause_type, NUM_RESULTS, contract_title
         )
- 
+
         chunks = results["documents"][0]
         metadatas = results["metadatas"][0]
- 
+
         if not chunks:
             return f"No clauses found matching '{clause_type}'."
- 
+
         formatted = []
         for meta, chunk in zip(metadatas, chunks):
             formatted.append(
                 f"Contract: {meta['contract_title']}\n"
                 f"Excerpt: {chunk}"
             )
- 
+
         return "\n\n---\n\n".join(formatted)
     except Exception as e:
         return f"Error finding clauses: {e}"
@@ -153,9 +206,9 @@ async def find_contract_clauses(clause_type: str, contract_title: str = None) ->
 @mcp.tool()
 async def list_contracts(party_name: str = None) -> str:
     """
-    List all contracts available in the database or all contracts to which the named 
-    party is party. Returns the titles of every contract that has been indexed. Use 
-    this when the user wants to know what contracts are available to query, or when 
+    List all contracts available in the database or all contracts to which the named
+    party is party. Returns the titles of every contract that has been indexed. Use
+    this when the user wants to know what contracts are available to query, or when
     you need to look up exact contract titles before calling other tools.
 
     Args:
@@ -164,25 +217,25 @@ async def list_contracts(party_name: str = None) -> str:
     """
     try:
         contracts = await asyncio.to_thread(list_matching_contracts, party_name)
- 
+
         if not contracts:
             if party_name:
                 return f"No contracts found involving party '{party_name}'."
-            
+
             return "No contracts found in the database."
- 
+
         formatted = []
         for c in contracts:
             line = c["contract_title"]
             if c["parties"]:
                 line += f" (parties: {c['parties']})"
             formatted.append(line)
- 
+
         header = f"Found {len(contracts)} contract(s)"
         if party_name:
             header += f" involving '{party_name}'"
         header += ":\n"
- 
+
         return header + "\n".join(formatted)
     except Exception as e:
         return f"Error listing contracts: {e}"
