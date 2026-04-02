@@ -13,6 +13,7 @@ from rag.rag_core import (
     rewrite_prompt,
     list_matching_contracts,
     generate_answer,
+    generate_comparison,
 )
 
 PASS = "PASS"
@@ -221,6 +222,49 @@ def test_generate_answer_filtered():
           f"answer is {len(answer)} chars")
 
 
+def test_generate_comparison():
+    """generate_comparison returns a non-empty answer given two contracts."""
+    name = "generate_comparison (basic)"
+ 
+    all_contracts = list_matching_contracts()
+    if len(all_contracts) < 2:
+        print(f"  [{FAIL}] {name}: need at least 2 contracts in database, "
+              f"got {len(all_contracts)}")
+        return
+ 
+    titles = [all_contracts[0]["contract_title"], all_contracts[1]["contract_title"]]
+    answer = generate_comparison("What are the termination provisions?", titles)
+ 
+    if not isinstance(answer, str) or len(answer.strip()) == 0:
+        print(f"  [{FAIL}] {name}: empty or non-string answer")
+        return
+ 
+    print(f"  [{PASS}] {name}: got answer ({len(answer)} chars) "
+          f"comparing '{titles[0]}' and '{titles[1]}'")
+ 
+ 
+def test_generate_comparison_references_contracts():
+    """generate_comparison's answer references both contract titles."""
+    name = "generate_comparison (references both contracts)"
+ 
+    all_contracts = list_matching_contracts()
+    if len(all_contracts) < 2:
+        print(f"  [{FAIL}] {name}: need at least 2 contracts in database")
+        return
+ 
+    titles = [all_contracts[0]["contract_title"], all_contracts[1]["contract_title"]]
+    answer = generate_comparison("How do the governing law clauses differ?", titles)
+ 
+    # The comparison prompt instructs the LLM to be specific about which contract
+    # each observation applies to, so both titles should appear in the answer
+    missing = [t for t in titles if t.lower() not in answer.lower()]
+    if missing:
+        print(f"  [{FAIL}] {name}: answer does not mention {missing}")
+        return
+ 
+    print(f"  [{PASS}] {name}: answer references both contracts")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -244,5 +288,7 @@ if __name__ == "__main__":
         test_generate_answer_no_history()
         test_generate_answer_with_history()
         test_generate_answer_filtered()
+        test_generate_comparison()
+        test_generate_comparison_references_contracts()
 
     print("\nDone.\n")
