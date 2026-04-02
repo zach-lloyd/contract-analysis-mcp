@@ -9,7 +9,8 @@ _DB_PATH = str(Path(__file__).parent / "chroma_data")
 CLIENT = chromadb.PersistentClient(path=_DB_PATH)
 COLLECTION = CLIENT.get_or_create_collection(name="legal_contracts")
 NUM_RESULTS = 10
-SYS_PROMPT = """
+MODEL = "qwen3:32b"
+BASE_SYS_PROMPT = """
              You are a helpful legal assistant. Provide a concise but thorough 
              answer to the user's latest question, using the relevant clauses 
              from existing legal contracts provided below. The prior history of this
@@ -23,6 +24,16 @@ SYS_PROMPT = """
              be honest about that. Do not hallucinate a false answer. Rather, you 
              should respond 'I don't have information about that.'
              """
+COMPARISON_SYS_PROMPT = (
+    "You are a helpful legal assistant specializing in contract comparison. "
+    "Below are relevant excerpts from multiple contracts, organized by "
+    "contract title. Compare and contrast these contracts with respect to "
+    "the user's question. Identify key similarities and differences. Be "
+    "specific about which contract each observation applies to. Do not " 
+    "hallucinate answers that are inconsistent with the information provided. "
+    "If the excerpts don't contain enough information to make a meaningful "
+    "comparison on the topic asked about, be honest about that."
+)
 
 
 def query_clauses(question: str, num_results: int, contract_title: str = None):
@@ -69,7 +80,7 @@ def rewrite_prompt(question: str, history: list[dict[str, str]]) -> str:
         chat_text += message["content"]
     
     rewritten_prompt = ollama.chat(
-        model="qwen3:32b",
+        model=MODEL,
         messages=[
             {
                 "role": "system",
@@ -193,7 +204,7 @@ def generate_answer(
 
     # Add the retrieved clauses to the system prompt
     full_sys_prompt = f"""
-                  {SYS_PROMPT} The relevant contract clauses are as follows: {context}.
+                  {BASE_SYS_PROMPT} The relevant contract clauses are as follows: {context}.
                   The prior history of this conversation is below, ending with the
                   user's current question. If there is no text provided other than a
                   question from the user, then this is the first question and there 
@@ -207,7 +218,7 @@ def generate_answer(
     history.append({"role": "user", "content": question})
 
     response = ollama.chat(
-        model="qwen3:32b",
+        model=MODEL,
         messages=[sys_message] + history
     )
 
@@ -216,3 +227,44 @@ def generate_answer(
     history.append({"role": "assistant", "content": answer})
 
     return answer, history, clauses
+
+
+def generate_comparison(question: str, contract_titles: list[str]) -> str:
+    """
+    Retrieves relevant clauses from each named contract and uses an LLM to
+    generate a comparative analysis. Each contract is queried separately so
+    the comparison prompt can present clauses side-by-side.
+ 
+    Args:
+        question: The user's question or topic to compare across contracts.
+        contract_titles: A list of contract titles to compare.
+    """
+    # Query clauses separately for each contract so the results are balanced
+    # across contracts rather than skewed toward whichever is most relevant
+    clauses_by_contract = {}
+    for title in contract_titles:
+        results = query_clauses(question, NUM_RESULTS, title)
+        clauses_by_contract[title] = results["documents"][0]
+ 
+    # Build the context with clear per-contract sections
+    context_parts = []
+    for title, chunks in clauses_by_contract.items():
+        excerpts = "\n\n".join(chunks)
+        context_parts.append(f"=== {title} ===\n{excerpts}")
+ 
+    context = "\n\n".join(context_parts)
+ 
+    full_sys_prompt = (
+        f"{COMPARISON_SYS_PROMPT}"
+        f"\n\nRelevant contract excerpts:\n\n{context}"
+    )
+ 
+    response = ollama.chat(
+        model=MODEL,
+        messages=[
+            {"role": "system", "content": full_sys_prompt},
+            {"role": "user", "content": question},
+        ],
+    )
+ 
+    return response["message"]["content"]
