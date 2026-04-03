@@ -1,30 +1,31 @@
 import json
-import chromadb
 import random
 import re
 import ollama
 from datetime import datetime
-from rag.rag_core import NUM_RESULTS, BASE_SYS_PROMPT
-from query_testing import CONCEPTUAL_CATEGORIES, FACTUAL_CATEGORIES
+from rag.rag_core import generate_answer
+from testing.query_testing import CONCEPTUAL_CATEGORIES
 from pathlib import Path
 
 # Use training dataset as the primary benchmark for testing, since it contains 408
 # of the 510 contracts and is thus much more robust than the test dataset
 _TEST_DATA = str(Path(__file__).parent.parent / "cuad" / "data" / "train_separate_questions.json")
 with open(_TEST_DATA, "r") as f:
-    cuad = json.load(f)
+    contract_data = json.load(f)
+
+INTERVAL = 8
 
 
-def get_qa_pairs(data, interval=0):
+def get_qa_pairs(data, interval=1):
     """
     Get a random question/answer pair from each contract for use in testing.
 
     Args:
         data: A JSON dictionary representing the contract dataset.
-        interval: Optional. If included, it specifies how many contracts to skip
-                  before getting a question from the next one. Use if the contract
-                  database is too large to make testing a question from every 
-                  contract feasible.
+        interval: Optional. Specifies how many contracts to skip before getting
+                  a question from the next one. Defaults to 1 (every contract).
+                  Use a higher value if the contract database is too large to 
+                  make testing a question from every contract feasible.
     """
     qas = []
 
@@ -61,62 +62,26 @@ def get_qa_pairs(data, interval=0):
     return qas
 
 
-def get_candidate_answers(qas, number_of_results):
+def get_candidate_answers(qas):
     """
-    Use an LLM to generate an anwswer for each question in qas.
+    Use rag_core.generate_answer to produce an answer for each question in qas.
 
     Args:
-        qas: A dictionary of question/answer pairs, the title of the
-             contract they relate to, and the category type of the
+        qas: A list of dictionaries containing question/answer pairs, the title
+             of the contract they relate to, and the category type of the
              question (factual or conceptual).
-        number_of_results: The number of results to retrieve with each query.
     """    
-    _db_path = str(Path(__file__).parent.parent / "rag" / "chroma_data")
-    client = chromadb.PersistentClient(path=_db_path)
-    collection = client.get_or_create_collection(name="legal_contracts")
     question_num = 1
 
     for qa in qas:
         print(f"Generating answer for question number {question_num}...\n")
 
-        question = qa["question"]
-
-        results = collection.query(
-            query_texts=[question],
-            n_results=number_of_results,
-            # Be sure to only search the applicable contract, not the entire
-            # database
-            where={"contract_title": qa["title"]}
+        answer, _, _ = generate_answer(
+            qa["question"], 
+            contract_title=qa["title"]
         )
 
-        chunks = results["documents"][0]
-        metadatas = results["metadatas"][0]
-        clauses_list = []
-
-        for meta, chunk in zip(metadatas, chunks):
-            title_and_excerpt = f"Contract Title: {meta['contract_title']}\nContract Excerpt: {chunk}\n\n"
-            clauses_list.append(title_and_excerpt)
-
-        context = " ".join(clauses_list)
-        
-        full_sys_prompt = f"""
-                  {BASE_SYS_PROMPT} The relevant contract clauses are as follows: {context}.
-                  The prior history of this conversation is below, ending with the
-                  user's current question. If there is no text provided other than a
-                  question from the user, then this is the first question and there 
-                  is no conversation history to reference.
-                  """
-        
-        sys_message = {"role": "system", "content": full_sys_prompt}
-        q = {"role": "user", "content": f"Question: {question}"}
-        
-        response = ollama.chat(
-            model="qwen3:32b",
-            messages=[sys_message, q]
-        )
-
-        a = response["message"]["content"]
-        qa["generated_answer"] = a
+        qa["generated_answer"] = answer
         question_num += 1
                     
     return qas
@@ -128,8 +93,8 @@ def score_answers(qas):
     score them for correctness and completeness.
 
     Args:
-        qas: A dictionary of question/answer pairs, the title of the
-             contract they relate to, and the category type of the
+        qas: A list of dictionaries containing question/answer pairs, the title
+             of the contract they relate to, and the category type of the
              question (factual or conceptual).
     """
     scores = []
@@ -173,9 +138,11 @@ def score_answers(qas):
 
         question_num += 1
     
+    output_dir = Path(__file__).parent / "test_results"
+    output_dir.mkdir(exist_ok=True)
     # Include the timestamp in the filepath so that prior runs are not overwritten
     # and can be compared
-    file_path = f"test_results/generation_test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    file_path = output_dir / f"generation_test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
     with open(file_path, "w") as json_file:
         json.dump(scores, json_file, indent=4)
@@ -184,6 +151,6 @@ def score_answers(qas):
 
 
 if __name__ == "__main__":
-    qa_pairs = get_qa_pairs(cuad)
-    candidate_answers = get_candidate_answers(qa_pairs, NUM_RESULTS)
+    qa_pairs = get_qa_pairs(contract_data, 8)
+    candidate_answers = get_candidate_answers(qa_pairs)
     results = score_answers(candidate_answers)
