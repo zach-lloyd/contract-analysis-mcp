@@ -10,20 +10,19 @@ CLIENT = chromadb.PersistentClient(path=_DB_PATH)
 COLLECTION = CLIENT.get_or_create_collection(name="legal_contracts")
 NUM_RESULTS = 10
 MODEL = "qwen3:32b"
-BASE_SYS_PROMPT = """
-             You are a helpful legal assistant. Provide a concise but thorough 
-             answer to the user's latest question, using the relevant clauses 
-             from existing legal contracts provided below. The prior history of this
-             conversation, if any, is also provided below. You may use it as additional
-             context when providing your answer, but your answer should be primarily
-             based on the relevant contract clauses that have been provided. If
-             the prior answer references a specific contract, you should bias
-             towards focusing on that contract in referencing the user's current
-             question, unless their question makes it clear that they want you to 
-             refer to other contracts. If the answer is not available. You should 
-             be honest about that. Do not hallucinate a false answer. Rather, you 
-             should respond 'I don't have information about that.'
-             """
+BASE_SYS_PROMPT = (
+    "You are a helpful legal assistant. Provide a concise but thorough answer "
+    "to the user's latest question, using the relevant clauses from existing legal "
+    "contracts provided below. The prior history of this conversation, if any, is "
+    "also provided below. You may use it as additional context when providing your "
+    "answer, but your answer should be primarily based on the relevant contract "
+    "clauses that have been provided. If the prior answer references a specific "
+    "contract, you should bias towards focusing on that contract in referencing "
+    "the user's current question, unless their question makes it clear that they "
+    "want you to refer to other contracts. If the answer is not available. You should "
+    "be honest about that. Do not hallucinate a false answer. Rather, you should "
+    "respond 'I don't have information about that.'"
+)
 COMPARISON_SYS_PROMPT = (
     "You are a helpful legal assistant specializing in contract comparison. "
     "Below are relevant excerpts from multiple contracts, organized by "

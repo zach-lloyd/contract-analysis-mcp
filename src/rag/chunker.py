@@ -4,7 +4,7 @@ import json
 import chromadb
 import re
 
-DATASET = "../cuad/data/CUADv1.json"
+DATASET = str(Path(__file__).parent.parent / "cuad" / "data" / "CUADv1.json")
 
 
 def load_contracts(filename: str) -> list[dict[str, str]]:
