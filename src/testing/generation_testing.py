@@ -139,6 +139,7 @@ def score_answers(qas):
         question_num += 1
     
     output_dir = Path(__file__).parent / "test_results"
+    # Create test_results directory if one does not already exist
     output_dir.mkdir(exist_ok=True)
     # Include the timestamp in the filepath so that prior runs are not overwritten
     # and can be compared
