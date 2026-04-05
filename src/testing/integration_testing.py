@@ -160,6 +160,186 @@ async def run_tests(db_only=False):
                     return
 
                 print(f"  [{PASS}] {name}: correctly reported contract not found")
+            
+
+            async def test_ask_contracts(session):
+                """ask_contracts returns a non-empty answer for a broad question."""
+                name = "ask_contracts (broad query)"
+                result = await session.call_tool("ask_contracts", {
+                    "question": "What are common termination provisions?"
+                })
+                text = get_text(result)
+
+                if not text or len(text.strip()) == 0:
+                    print(f"  [{FAIL}] {name}: got empty response")
+                    return
+
+                # A meaningful answer should be more than a one-word reply
+                if len(text.split()) < 10:
+                    print(f"  [{FAIL}] {name}: response suspiciously short ({len(text.split())} words)")
+                    return
+
+                print(f"  [{PASS}] {name}: got answer ({len(text)} chars)")
+            
+
+            async def test_ask_contract(session):
+                """ask_contract returns a relevant answer for a known contract."""
+                name = "ask_contract (known contract)"
+
+                # Get a real contract title to use
+                list_result = await session.call_tool("list_contracts", {})
+                list_text = get_text(list_result)
+                first_contract_line = list_text.splitlines()[1]
+                title = first_contract_line.split(" (parties:")[0].strip()
+
+                result = await session.call_tool("ask_contract", {
+                    "question": "What is the governing law for this contract?",
+                    "contract_title": title,
+                })
+                text = get_text(result)
+
+                if not text or len(text.strip()) == 0:
+                    print(f"  [{FAIL}] {name}: got empty response")
+                    return
+
+                if len(text.split()) < 10:
+                    print(f"  [{FAIL}] {name}: response suspiciously short ({len(text.split())} words)")
+                    return
+
+                print(f"  [{PASS}] {name}: got answer ({len(text)} chars) for '{title}'")
+
+
+            async def test_ask_contract_nonexistent_title(session):
+                """ask_contract returns an error for a nonexistent contract title."""
+                name = "ask_contract (nonexistent title)"
+                result = await session.call_tool("ask_contract", {
+                    "question": "What is the governing law for this contract?",
+                    "contract_title": "ZZZ_FAKE_CONTRACT_XYZ",
+                })
+                text = get_text(result)
+
+                if "no contract found" not in text.lower():
+                    print(f"  [{FAIL}] {name}: expected error message, got: {text[:100]}")
+                    return
+
+                print(f"  [{PASS}] {name}: correctly reported contract not found")
+            
+
+            async def test_compare_contracts(session):
+                """compare_contracts returns an answer that references both contracts."""
+                name = "compare_contracts (references both)"
+
+                # Get two real contract titles
+                list_result = await session.call_tool("list_contracts", {})
+                list_text = get_text(list_result)
+                lines = list_text.splitlines()[1:]
+                titles = [line.split(" (parties:")[0].strip() for line in lines[:2]]
+
+                if len(titles) < 2:
+                    print(f"  [{FAIL}] {name}: need at least 2 contracts in database")
+                    return
+
+                result = await session.call_tool("compare_contracts", {
+                    "question": "How do the governing law clauses differ?",
+                    "contract_titles": titles,
+                })
+                text = get_text(result)
+
+                if not text or len(text.strip()) == 0:
+                    print(f"  [{FAIL}] {name}: got empty response")
+                    return
+
+                # Both contract titles should appear in the comparison
+                missing = [t for t in titles if t.lower() not in text.lower()]
+                if missing:
+                    print(f"  [{FAIL}] {name}: response doesn't mention {missing}")
+                    return
+
+                print(f"  [{PASS}] {name}: answer references both '{titles[0]}' and '{titles[1]}'")
+
+
+            async def test_compare_contracts_uses_comparison_language(session):
+                """compare_contracts actually compares rather than just summarizing each contract."""
+                name = "compare_contracts (comparison language)"
+
+                list_result = await session.call_tool("list_contracts", {})
+                list_text = get_text(list_result)
+                lines = list_text.splitlines()[1:]
+                titles = [line.split(" (parties:")[0].strip() for line in lines[:2]]
+
+                if len(titles) < 2:
+                    print(f"  [{FAIL}] {name}: need at least 2 contracts in database")
+                    return
+
+                result = await session.call_tool("compare_contracts", {
+                    "question": "How do the termination clauses differ?",
+                    "contract_titles": titles,
+                })
+                text = get_text(result).lower()
+
+                # Theoretically, the contracts could be compared without using any
+                # of these words. But in practice, if none of these appear in the
+                # response, it's a red flag that the LLM may just be summarizing
+                # each contract rather than actually comparing them
+                comparison_indicators = [
+                    "differ", "whereas", "both", "unlike", "in contrast",
+                    "similarly", "however", "on the other hand", "while",
+                    "compared", "distinction", "common", "same", "different",
+                ]
+
+                matches = [word for word in comparison_indicators if word in text]
+
+                if not matches:
+                    print(f"  [{FAIL}] {name}: no comparison language found — LLM may be "
+                        f"summarizing rather than comparing")
+                    return
+
+                print(f"  [{PASS}] {name}: found comparison language: {', '.join(matches)}")
+
+
+            async def test_compare_contracts_too_few_titles(session):
+                """compare_contracts returns an error when given fewer than two titles."""
+                name = "compare_contracts (fewer than two titles)"
+
+                list_result = await session.call_tool("list_contracts", {})
+                list_text = get_text(list_result)
+                first_line = list_text.splitlines()[1]
+                title = first_line.split(" (parties:")[0].strip()
+
+                result = await session.call_tool("compare_contracts", {
+                    "question": "How do termination clauses differ?",
+                    "contract_titles": [title],
+                })
+                text = get_text(result)
+
+                if "at least two" not in text.lower():
+                    print(f"  [{FAIL}] {name}: expected 'at least two' error, got: {text[:100]}")
+                    return
+
+                print(f"  [{PASS}] {name}: correctly requires at least two contracts")
+
+
+            async def test_compare_contracts_nonexistent_title(session):
+                """compare_contracts returns an error when one title doesn't exist."""
+                name = "compare_contracts (nonexistent title in list)"
+
+                list_result = await session.call_tool("list_contracts", {})
+                list_text = get_text(list_result)
+                first_line = list_text.splitlines()[1]
+                real_title = first_line.split(" (parties:")[0].strip()
+
+                result = await session.call_tool("compare_contracts", {
+                    "question": "How do termination clauses differ?",
+                    "contract_titles": [real_title, "ZZZ_FAKE_CONTRACT_XYZ"],
+                })
+                text = get_text(result)
+
+                if "not found" not in text.lower():
+                    print(f"  [{FAIL}] {name}: expected 'not found' error, got: {text[:100]}")
+                    return
+
+                print(f"  [{PASS}] {name}: correctly reported contract not found")
+
 
             print("\n--- DB-only tests ---\n")
             await test_list_contracts(session)
@@ -168,12 +348,19 @@ async def run_tests(db_only=False):
             await test_find_contract_clauses(session)
             await test_find_contract_clauses_filtered(session)
             await test_find_contract_clauses_nonexistent_title(session)
-            
+
             if db_only:
                 print("\n--- Skipping LLM tests (--db-only) ---\n")
             else:
                 print("\n--- LLM tests (require Ollama + qwen3:32b) ---\n")
-                # LLM tests will go here
+                await test_ask_contracts(session)
+                await test_ask_contracts(session)
+                await test_ask_contract(session)
+                await test_ask_contract_nonexistent_title(session)
+                await test_compare_contracts(session)
+                await test_compare_contracts_uses_comparison_language(session)
+                await test_compare_contracts_too_few_titles(session)
+                await test_compare_contracts_nonexistent_title(session)
 
     print("\nDone.\n")
 
