@@ -12,6 +12,10 @@ The RAG pipeline supports multi-turn conversations through a sliding-window hist
 
 The whole pipeline is wrapped in an MCP server so that any MCP-compatible client (such as Claude Desktop) can call it as a set of tools.
 
+## Brief Demo
+
+https://github.com/user-attachments/assets/ffd40fdd-331d-45e2-a98b-8bfb44ce2972
+
 ## MCP Tools
 
 The server exposes five tools:
