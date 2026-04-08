@@ -1,12 +1,12 @@
 # Legal Contract RAG — MCP Server
 
-A retrieval-augmented generation (RAG) system for analyzing legal contracts, exposed as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server. It lets an LLM-powered assistant answer natural-language questions about a corpus of contracts, compare provisions across agreements, and locate specific clause types — all grounded in the actual contract text rather than parametric knowledge alone.
+A retrieval-augmented generation (RAG) system for analyzing legal contracts, exposed as an [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server. It lets an LLM-powered assistant answer natural-language questions about a corpus of contracts, compare provisions across agreements, and locate specific clause types.
 
-The project uses the [CUAD (Contract Understanding Atticus Dataset)](https://www.atticusprojectai.org/cuad) as its contract corpus, ChromaDB for vector storage and retrieval, and Ollama with the Qwen3 32B model for generation.
+The project uses the [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) as its contract corpus, ChromaDB for vector storage and retrieval, and Ollama with the Qwen3 32B model for generation.
 
 ## How It Works
 
-Contracts are loaded from the CUAD dataset, split into overlapping token-level chunks, and indexed into a ChromaDB collection along with metadata (contract title, party names). At query time, the system retrieves the most relevant chunks for a given question, assembles them into a prompt, and passes them to an LLM to generate a grounded answer.
+Contracts are loaded from the CUAD dataset, split into overlapping token-level chunks, and indexed into a ChromaDB collection. The title of each contract and the names of the parties are also stored in the collection as metadata. At query time, the system retrieves the most relevant chunks for a given question, assembles them into a prompt, and passes them to an LLM to generate a grounded answer.
 
 The RAG pipeline supports multi-turn conversations through a sliding-window history mechanism: follow-up questions are rewritten into self-contained queries using the conversation context, and previously retrieved clauses are carried forward so the model can reference them across turns.
 
@@ -18,7 +18,7 @@ The server exposes five tools:
 
 **`ask_contracts`** — Ask a question across all contracts in the database. Returns an answer synthesized from the most relevant clauses found anywhere in the corpus. Supports multi-turn conversation via a `session_id`.
 
-**`ask_contract`** — Ask a question about a specific contract by title. Restricts retrieval to that single agreement. Also supports multi-turn conversation.
+**`ask_contract`** — Ask a question about a specific contract by title. Restricts retrieval to that single agreement. Also supports multi-turn conversation via a `session_id`.
 
 **`compare_contracts`** — Compare two or more contracts on a given topic. Each contract is queried independently so results are balanced, and the LLM produces a side-by-side comparative analysis.
 
@@ -29,17 +29,19 @@ The server exposes five tools:
 ## Project Structure
 
 ```
-rag/
-├── chunker.py          # Loads CUAD contracts, chunks them, indexes into ChromaDB
-├── rag_core.py         # Core RAG logic: query, prompt rewriting, answer generation
-├── server.py           # MCP server exposing the five tools above
-└── chroma_data/        # ChromaDB persistent storage (generated)
-
-testing/
-├── query_testing.py        # Measures retrieval accuracy (conceptual vs. factual)
-├── generation_testing.py   # Scores generated answers against reference answers
-├── rag_smoke_test.py       # Smoke tests for rag_core functions
-└── integration_testing.py  # Integration tests for the MCP server tools
+.
+├── src/
+│  ├── rag/
+│  │   ├── chunker.py          # Loads CUAD contracts, chunks them, indexes into ChromaDB
+│  │   ├── rag_core.py         # Core RAG logic: query, prompt rewriting, answer generation
+│  │   ├── server.py           # MCP server exposing the five tools above
+│  │   └── chroma_data/        # ChromaDB persistent storage (generated)
+│  └── testing/
+│      ├── query_testing.py        # Measures retrieval accuracy (conceptual vs. factual)
+│      ├── generation_testing.py   # Scores generated answers against reference answers
+│      ├── rag_smoke_test.py       # Smoke tests for rag_core functions
+│      └── integration_testing.py  # Integration tests for the MCP server tools
+└── README.md
 ```
 
 ## Prerequisites
@@ -66,7 +68,7 @@ testing/
 3. **Build the vector database:**
 
    ```bash
-   python rag/chunker.py
+   python3 rag/chunker.py
    ```
 
    This loads all contracts from CUAD, chunks them into ~256-token segments with 80-token overlap, and indexes them into a persistent ChromaDB collection. Only needs to be run once.
@@ -87,8 +89,8 @@ Add the server to your Claude Desktop MCP configuration:
 {
   "mcpServers": {
     "contracts": {
-      "command": "uv",
-      "args": ["run", "python3", "path/to/rag/server.py"]
+      "command": "uv", # You may need to substitute your absolute uv path here
+      "args": ["run", "--directory", "python3", "path/to/rag/server.py"]
     }
   }
 }
@@ -103,7 +105,14 @@ Once connected, you can ask Claude questions like:
 
 ## Testing
 
-The project includes four levels of testing:
+The project includes five levels of testing:
+
+**RAG Smoke tests** (`rag_smoke_test.py`) — Quick functional tests for the core RAG functions (querying, listing, answer generation, comparison). Can be run in `--db-only` mode to skip tests that require Ollama.
+
+```bash
+python testing/rag_smoke_test.py           # all tests
+python testing/rag_smoke_test.py --db-only  # ChromaDB tests only
+```
 
 **Retrieval accuracy** (`query_testing.py`) — Samples question/answer pairs from the CUAD training set and measures how often the correct answer appears in the top-k retrieved chunks. Reports accuracy separately for conceptual questions (e.g., "Is there a non-compete clause?") and factual questions (e.g., "What is the effective date?").
 
@@ -111,17 +120,10 @@ The project includes four levels of testing:
 python testing/query_testing.py
 ```
 
-**Generation quality** (`generation_testing.py`) — Generates answers for sampled questions using the full RAG pipeline, then uses an LLM judge to score each answer against the reference answer on a 1–5 scale for correctness and completeness. Results are saved as timestamped JSON files for comparison across runs.
+**Generation quality** (`generation_testing.py`) — Generates answers for sampled questions using the full RAG pipeline, then uses an LLM judge to score each answer against the reference answer on a 1–5 scale for correctness and completeness, with the LLM judge also providing a one-sentence justification for its answer. Results are saved as timestamped JSON files for comparison across runs.
 
 ```bash
 python testing/generation_testing.py
-```
-
-**Smoke tests** (`rag_smoke_test.py`) — Quick functional tests for the core RAG functions (querying, listing, answer generation, comparison). Can be run in `--db-only` mode to skip tests that require Ollama.
-
-```bash
-python testing/rag_smoke_test.py           # all tests
-python testing/rag_smoke_test.py --db-only  # ChromaDB tests only
 ```
 
 **Integration tests** (`integration_testing.py`) — Spins up the MCP server and exercises each tool through the MCP client protocol, including happy-path and error-handling scenarios. Also supports `--db-only`.
@@ -130,6 +132,38 @@ python testing/rag_smoke_test.py --db-only  # ChromaDB tests only
 python testing/integration_testing.py           # all tests
 python testing/integration_testing.py --db-only  # DB tests only
 ```
+
+**Manual end-to-end tests** - In addition to the above automated tests, I also performed extensive manual testing of the MCP after connecting it to Claude. After activating the MCP, I asked Claude the following question sequences:
+
+*Sequence 1: Deep Follow-Up Chain*
+1. "What are the termination provisions in the Suntron Corp Maintenance Agreement?"
+2. "Is there a notice period required before termination?"
+3. "What about liability — is there a cap on damages?"
+4. "How does the indemnification relate to that liability cap?"
+
+*Sequence 2: Cross-Contract Comparison*
+1. "What are the parties to the Azul Sa Maintenance Agreement?"
+2. "What are the key obligations of each party under that agreement?"
+3. "How does the Bloom Energy Maintenance Agreement differ in terms of party obligations?"
+4. "Between the Azul and Bloom Energy agreements, which one has broader termination rights?"
+
+*Sequence 3: Mid-Conversation Topic Switch*
+1. "What are the non-compete or exclusivity provisions in the Zogenix Distributor Agreement?"
+2. "Are there any territorial restrictions in that agreement?"
+3. "What is the scope of intellectual property assigned under the Know Labs IP Agreement?"
+4. "Does that IP agreement include any license-back provisions?"
+
+*Sequence 4: Ambiguous Pronoun Resolution*
+1. "Who are the parties to the Range Resources Transportation Agreement?"
+2. "Can they assign the agreement to a third party?"
+3. "What's the governing law?"
+4. "Does it allow termination for convenience?"
+
+*Sequence 5: Hallucination Resistance*
+1. "What are the revenue-sharing provisions in the Emmis Communications Marketing Agreement?"
+2. "What about most-favored-nation clauses in that agreement?"
+3. "Does the Coral Gold Consulting Agreement contain any non-compete restrictions?"
+4. "How does it compare to the merger agreement between Ford and Tesla?"
 
 ## Design Decisions
 
