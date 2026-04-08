@@ -9,6 +9,10 @@ from rag_core import (
 from uuid import uuid4
 import asyncio
 
+# For debugging server connection to Claude Desktop
+import sys
+print("server.py: starting imports", file=sys.stderr)
+
 # Initialize FastMCP server
 mcp = FastMCP("contracts")
 
@@ -242,6 +246,9 @@ async def list_contracts(party_name: str = None) -> str:
 
 
 def main():
+    # For debugging connection to Claude Desktop
+    print("server.py: about to start MCP server", file=sys.stderr)
+
     mcp.run(transport="stdio")
 
 
