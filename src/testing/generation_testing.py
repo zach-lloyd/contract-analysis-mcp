@@ -1,7 +1,8 @@
 import json
 import random
 import re
-import ollama
+import argparse
+from rag.llm_provider import chat, set_provider, VALID_PROVIDERS
 from datetime import datetime
 from rag.rag_core import generate_answer
 from testing.query_testing import CONCEPTUAL_CATEGORIES
@@ -116,8 +117,7 @@ def score_answers(qas):
         candidate_answer = qa["generated_answer"]
         category_type = qa["category_type"]
 
-        score = ollama.chat(
-            model="qwen3:32b",
+        score = chat(
             messages=[
                 {"role": "system", "content": scoring_prompt},
                 {"role": "user", "content": f"Question: {question}"},
@@ -126,14 +126,14 @@ def score_answers(qas):
             ]
         )
 
-        print(score["message"]["content"])
+        print(score)
 
         scores.append({
             "question": question,
             "candidate_answer": candidate_answer,
             "reference_answer": reference_answer,
             "category_type": category_type,
-            "result": score["message"]["content"]
+            "result": score
         })
 
         question_num += 1
@@ -152,6 +152,22 @@ def score_answers(qas):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--provider",
+        choices=VALID_PROVIDERS,
+        default="ollama",
+        help="LLM provider to use: ollama (default), claude, or gemini",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Override the default model for the chosen provider",
+    )
+    args = parser.parse_args()
+
+    set_provider(args.provider, args.model)
+
     qa_pairs = get_qa_pairs(contract_data, 8)
     candidate_answers = get_candidate_answers(qa_pairs)
     results = score_answers(candidate_answers)

@@ -1,5 +1,5 @@
 import chromadb
-import ollama
+from llm_provider import chat
 from pathlib import Path
 
 # Ensure the chroma_data folder can be found regardless of which folder the code
@@ -9,7 +9,6 @@ _DB_PATH = str(Path(__file__).parent / "chroma_data")
 CLIENT = chromadb.PersistentClient(path=_DB_PATH)
 COLLECTION = CLIENT.get_or_create_collection(name="legal_contracts")
 NUM_RESULTS = 10
-MODEL = "qwen3:32b"
 BASE_SYS_PROMPT = (
     "You are a helpful legal assistant. Provide a concise but thorough answer "
     "to the user's latest question, using the relevant clauses from existing legal "
@@ -78,8 +77,7 @@ def rewrite_prompt(question: str, history: list[dict[str, str]]) -> str:
         chat_text += f"{message['role']}: "
         chat_text += message["content"]
     
-    rewritten_prompt = ollama.chat(
-        model=MODEL,
+    rewritten_prompt = chat(
         messages=[
             {
                 "role": "system",
@@ -216,12 +214,7 @@ def generate_answer(
 
     history.append({"role": "user", "content": question})
 
-    response = ollama.chat(
-        model=MODEL,
-        messages=[sys_message] + history
-    )
-
-    answer = response["message"]["content"]
+    answer = chat["message"]["content"]
 
     history.append({"role": "assistant", "content": answer})
 
@@ -258,8 +251,7 @@ def generate_comparison(question: str, contract_titles: list[str]) -> str:
         f"\n\nRelevant contract excerpts:\n\n{context}"
     )
  
-    response = ollama.chat(
-        model=MODEL,
+    response = chat(
         messages=[
             {"role": "system", "content": full_sys_prompt},
             {"role": "user", "content": question},
