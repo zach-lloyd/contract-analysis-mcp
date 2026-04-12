@@ -4,9 +4,7 @@ from rag_core import (
     list_matching_contracts,
     NUM_RESULTS,
 )
-from llm_provider import set_provider, VALID_PROVIDERS
 from uuid import uuid4
-import argparse
 import asyncio
 
 # For debugging server connection to Claude Desktop
@@ -265,29 +263,7 @@ async def list_contracts(party_name: str = None) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--provider",
-        choices=VALID_PROVIDERS,
-        default="ollama",
-        help="LLM provider to use: ollama (default), claude, or gemini",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Override the default model for the chosen provider",
-    )
-    args = parser.parse_args()
-
-    set_provider(args.provider, args.model)
-
-    # For debugging connection to Claude Desktop
-    print(
-        f"server.py: using provider '{args.provider}', "
-        f"about to start MCP server",
-        file=sys.stderr,
-    )
-    
+    print("server.py: about to start MCP server", file=sys.stderr)    
     mcp.run(transport="stdio")
 
 
