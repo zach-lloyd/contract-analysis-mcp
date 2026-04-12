@@ -10,7 +10,9 @@ COLLECTION = CLIENT.get_or_create_collection(name="legal_contracts")
 NUM_RESULTS = 10
 
 
-def query_clauses(question: str, num_results: int, contract_title: str = None):
+def query_clauses(
+        question: str, num_results: int, contract_title: str = None
+) ->  chromadb.QueryResult:
     """
     Query the contract database for the chunks that are most relevant to the 
     question.
