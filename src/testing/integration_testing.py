@@ -1,16 +1,4 @@
-"""
-Integration tests for MCP server tools.
-
-Run DB-only tests (no Ollama required):
-    python mcp_integration_test.py --db-only
-
-Run all tests (requires Ollama with qwen3:32b):
-    python mcp_integration_test.py
-"""
 import asyncio
-import argparse
-import json
-import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pathlib import Path
@@ -23,13 +11,10 @@ FAIL = "FAIL"
 _SERVER_PATH = str(Path(__file__).parent.parent / "rag" / "server.py")
 
 
-async def run_tests(db_only=False):
+async def run_tests():
     """
     Spin up the MCP server once, run all tests against the shared session,
     then tear down.
-
-    Args:
-        db_only: Optional. If true, skips the LLM tests.
     """
     server_params = StdioServerParameters(
         command="uv",
@@ -163,50 +148,63 @@ async def run_tests(db_only=False):
             
 
             async def test_ask_contracts(session):
-                """ask_contracts returns a non-empty answer for a broad question."""
+                """ask_contracts returns clause excerpts and a session ID."""
                 name = "ask_contracts (broad query)"
                 result = await session.call_tool("ask_contracts", {
                     "question": "What are common termination provisions?"
                 })
                 text = get_text(result)
-
+ 
                 if not text or len(text.strip()) == 0:
                     print(f"  [{FAIL}] {name}: got empty response")
                     return
-
-                # A meaningful answer should be more than a one-word reply
-                if len(text.split()) < 10:
-                    print(f"  [{FAIL}] {name}: response suspiciously short ({len(text.split())} words)")
+ 
+                if "Session ID:" not in text:
+                    print(f"  [{FAIL}] {name}: missing Session ID header")
                     return
-
-                print(f"  [{PASS}] {name}: got answer ({len(text)} chars)")
+ 
+                excerpt_count = text.count("Contract Excerpt:")
+                if excerpt_count == 0:
+                    print(f"  [{FAIL}] {name}: no contract excerpts returned")
+                    return
+ 
+                print(f"  [{PASS}] {name}: got {excerpt_count} excerpts with session ID")
             
-
+ 
             async def test_ask_contract(session):
-                """ask_contract returns a relevant answer for a known contract."""
+                """ask_contract returns clause excerpts from the specified contract."""
                 name = "ask_contract (known contract)"
-
+ 
                 # Get a real contract title to use
                 list_result = await session.call_tool("list_contracts", {})
                 list_text = get_text(list_result)
                 first_contract_line = list_text.splitlines()[1]
                 title = first_contract_line.split(" (parties:")[0].strip()
-
+ 
                 result = await session.call_tool("ask_contract", {
                     "question": "What is the governing law for this contract?",
                     "contract_title": title,
                 })
                 text = get_text(result)
-
-                if not text or len(text.strip()) == 0:
-                    print(f"  [{FAIL}] {name}: got empty response")
+ 
+                if "Session ID:" not in text:
+                    print(f"  [{FAIL}] {name}: missing Session ID header")
                     return
-
-                if len(text.split()) < 10:
-                    print(f"  [{FAIL}] {name}: response suspiciously short ({len(text.split())} words)")
+ 
+                excerpt_count = text.count("Contract Excerpt:")
+                if excerpt_count == 0:
+                    print(f"  [{FAIL}] {name}: no contract excerpts returned")
                     return
-
-                print(f"  [{PASS}] {name}: got answer ({len(text)} chars) for '{title}'")
+ 
+                # Every "Contract Title:" line should reference the target contract
+                for line in text.splitlines():
+                    if line.startswith("Contract Title:"):
+                        returned_title = line.replace("Contract Title:", "").strip()
+                        if returned_title != title:
+                            print(f"  [{FAIL}] {name}: got excerpt from '{returned_title}', expected '{title}'")
+                            return
+ 
+                print(f"  [{PASS}] {name}: got {excerpt_count} excerpts, all from '{title}'")
 
 
             async def test_ask_contract_nonexistent_title(session):
@@ -226,75 +224,36 @@ async def run_tests(db_only=False):
             
 
             async def test_compare_contracts(session):
-                """compare_contracts returns an answer that references both contracts."""
+                """compare_contracts returns clause sections for both contracts."""
                 name = "compare_contracts (references both)"
-
+ 
                 # Get two real contract titles
                 list_result = await session.call_tool("list_contracts", {})
                 list_text = get_text(list_result)
                 lines = list_text.splitlines()[1:]
                 titles = [line.split(" (parties:")[0].strip() for line in lines[:2]]
-
+ 
                 if len(titles) < 2:
                     print(f"  [{FAIL}] {name}: need at least 2 contracts in database")
                     return
-
+ 
                 result = await session.call_tool("compare_contracts", {
                     "question": "How do the governing law clauses differ?",
                     "contract_titles": titles,
                 })
                 text = get_text(result)
-
+ 
                 if not text or len(text.strip()) == 0:
                     print(f"  [{FAIL}] {name}: got empty response")
                     return
-
-                # Both contract titles should appear in the comparison
-                missing = [t for t in titles if t.lower() not in text.lower()]
+ 
+                # Both contract titles should appear as section headers
+                missing = [t for t in titles if f"=== {t} ===" not in text]
                 if missing:
-                    print(f"  [{FAIL}] {name}: response doesn't mention {missing}")
+                    print(f"  [{FAIL}] {name}: missing section headers for {missing}")
                     return
-
-                print(f"  [{PASS}] {name}: answer references both '{titles[0]}' and '{titles[1]}'")
-
-
-            async def test_compare_contracts_uses_comparison_language(session):
-                """compare_contracts actually compares rather than just summarizing each contract."""
-                name = "compare_contracts (comparison language)"
-
-                list_result = await session.call_tool("list_contracts", {})
-                list_text = get_text(list_result)
-                lines = list_text.splitlines()[1:]
-                titles = [line.split(" (parties:")[0].strip() for line in lines[:2]]
-
-                if len(titles) < 2:
-                    print(f"  [{FAIL}] {name}: need at least 2 contracts in database")
-                    return
-
-                result = await session.call_tool("compare_contracts", {
-                    "question": "How do the termination clauses differ?",
-                    "contract_titles": titles,
-                })
-                text = get_text(result).lower()
-
-                # Theoretically, the contracts could be compared without using any
-                # of these words. But in practice, if none of these appear in the
-                # response, it's a red flag that the LLM may just be summarizing
-                # each contract rather than actually comparing them
-                comparison_indicators = [
-                    "differ", "whereas", "both", "unlike", "in contrast",
-                    "similarly", "however", "on the other hand", "while",
-                    "compared", "distinction", "common", "same", "different",
-                ]
-
-                matches = [word for word in comparison_indicators if word in text]
-
-                if not matches:
-                    print(f"  [{FAIL}] {name}: no comparison language found — LLM may be "
-                        f"summarizing rather than comparing")
-                    return
-
-                print(f"  [{PASS}] {name}: found comparison language: {', '.join(matches)}")
+ 
+                print(f"  [{PASS}] {name}: got clause sections for both '{titles[0]}' and '{titles[1]}'")
 
 
             async def test_compare_contracts_too_few_titles(session):
@@ -341,36 +300,22 @@ async def run_tests(db_only=False):
                 print(f"  [{PASS}] {name}: correctly reported contract not found")
 
 
-            print("\n--- DB-only tests ---\n")
+            print("\n--- Integration Tests ---\n")
             await test_list_contracts(session)
             await test_list_contracts_filtered(session)
             await test_list_contracts_nonexistent_party(session)
             await test_find_contract_clauses(session)
             await test_find_contract_clauses_filtered(session)
             await test_find_contract_clauses_nonexistent_title(session)
-
-            if db_only:
-                print("\n--- Skipping LLM tests (--db-only) ---\n")
-            else:
-                print("\n--- LLM tests (require Ollama + qwen3:32b) ---\n")
-                await test_ask_contracts(session)
-                await test_ask_contracts(session)
-                await test_ask_contract(session)
-                await test_ask_contract_nonexistent_title(session)
-                await test_compare_contracts(session)
-                await test_compare_contracts_uses_comparison_language(session)
-                await test_compare_contracts_too_few_titles(session)
-                await test_compare_contracts_nonexistent_title(session)
+            await test_ask_contracts(session)
+            await test_ask_contract(session)
+            await test_ask_contract_nonexistent_title(session)
+            await test_compare_contracts(session)
+            await test_compare_contracts_too_few_titles(session)
+            await test_compare_contracts_nonexistent_title(session)
 
     print("\nDone.\n")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--db-only",
-        action="store_true",
-        help="Run only DB tests (no Ollama required)"
-    )
-    args = parser.parse_args()
-    asyncio.run(run_tests(db_only=args.db_only))
+    asyncio.run(run_tests())
