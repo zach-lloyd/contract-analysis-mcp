@@ -1,7 +1,5 @@
 from mcp.server.fastmcp import FastMCP
 from rag_core import (
-    generate_answer,
-    generate_comparison,
     query_clauses,
     list_matching_contracts,
     NUM_RESULTS,
@@ -143,7 +141,7 @@ async def compare_contracts(question: str, contract_titles: list[str]) -> str:
     Retrieves relevant clauses from each named contract and passes them to the LLM to
     generate a comparative analysis. Use this when the user wants to understand
     how contracts differ on a particular provision, term, or obligation.
-
+ 
     Args:
         question: The user's question or topic to compare across contracts
                   (e.g., "How do the termination clauses differ?").
@@ -152,23 +150,31 @@ async def compare_contracts(question: str, contract_titles: list[str]) -> str:
     try:
         if len(contract_titles) < 2:
             return "Please provide at least two contract titles to compare."
-
+ 
         # Validate all titles up front
         contracts = await asyncio.to_thread(list_matching_contracts)
         known_titles = {c["contract_title"] for c in contracts}
-
+ 
         invalid = [t for t in contract_titles if t not in known_titles]
         if invalid:
             return (
                 f"Contract(s) not found: {', '.join(invalid)}. "
                 f"Use the list_contracts tool to see available contract titles."
             )
-
-        answer = await asyncio.to_thread(
-            generate_comparison, question, contract_titles
-        )
-
-        return answer
+ 
+        # Query each contract separately so the results are balanced
+        # across contracts rather than skewed toward whichever is most relevant
+        sections = []
+        for title in contract_titles:
+            results = await asyncio.to_thread(
+                query_clauses, question, NUM_RESULTS, title
+            )
+            chunks = results["documents"][0]
+ 
+            excerpts = "\n\n".join(chunks)
+            sections.append(f"=== {title} ===\n{excerpts}")
+ 
+        return "\n\n".join(sections)
     except Exception as e:
         return f"Error comparing contracts: {e}"
 
