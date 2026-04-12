@@ -1,14 +1,10 @@
 from mcp.server.fastmcp import FastMCP
 from rag_core import (
-    generate_answer,
-    generate_comparison,
     query_clauses,
     list_matching_contracts,
     NUM_RESULTS,
 )
-from llm_provider import set_provider, VALID_PROVIDERS
 from uuid import uuid4
-import argparse
 import asyncio
 
 # For debugging server connection to Claude Desktop
@@ -18,15 +14,13 @@ print("server.py: starting imports", file=sys.stderr)
 # Initialize FastMCP server
 mcp = FastMCP("contracts")
 
-# In-memory session storage for multi-turn conversations. Each session tracks 
-# its own conversation history and retrieved clauses independently.
-conversations: dict[str, list[dict]] = {}
+# In-memory session storage for storing up to 30 previously retrieved clauses.
 session_clauses: dict[str, list[str]] = {}
 
 
 def _get_or_create_session(
     session_id: str = None,
-) -> tuple[str, list[dict], list[str]]:
+) -> tuple[str, list[str]]:
     """
     Retrieve an existing session or create a new one. Centralizes the
     session-lookup logic so ask_contracts and ask_contract stay clean.
@@ -34,21 +28,20 @@ def _get_or_create_session(
     Args:
         session_id: An existing session ID, or None to create a new session.
     """
-    if not session_id or session_id not in conversations:
+    if not session_id or session_id not in session_clauses:
         session_id = str(uuid4())
-        conversations[session_id] = []
         session_clauses[session_id] = []
 
-    return session_id, conversations[session_id], session_clauses[session_id]
+    return session_id, session_clauses[session_id]
 
 
 @mcp.tool()
 async def ask_contracts(question: str, session_id: str = None) -> str:
     """
-    Ask a question across all contracts in the database. Retrieves the most
-    relevant clauses from any contract and uses an LLM to generate an answer
-    based on those clauses. Use this when the user's question is not specific
-    to a single contract or when they want to search broadly.
+    Ask a question across all contracts in the database. Returns the most relevant 
+    clauses for the host LLM to use when generating an answer. Use this when the 
+    user's question is not specific to a single contract or when they want to search 
+    broadly.
 
     Supports multi-turn conversations: pass the session_id from a previous
     response to maintain conversation context for follow-up questions. If no
@@ -57,21 +50,32 @@ async def ask_contracts(question: str, session_id: str = None) -> str:
     Args:
         question: The user's natural language question about their contracts.
         session_id: Optional. The session ID returned by a previous call.
-                    Pass this to continue a conversation with follow-up
-                    questions. If omitted, a new session is created.
+                    Pass this to include clauses retrieved from previous turns 
+                    of the conversation in the context. If omitted, a new session 
+                    is created.
     """
     try:
-        session_id, history, clauses = _get_or_create_session(session_id)
+        session_id, clauses = _get_or_create_session(session_id)
+        # To keep the context from balloning, limit the number of previously-retrieved
+        # clauses to 30
+        if len(clauses) > 30:
+            clauses[:] = clauses[-30:]
 
-        answer, history, clauses = await asyncio.to_thread(
-            generate_answer, question, None, clauses, history
-        )
+        results = await asyncio.to_thread(query_clauses, question, NUM_RESULTS)
 
-        # Persist the updated state back to the session dicts
-        conversations[session_id] = history
-        session_clauses[session_id] = clauses
+        chunks = results["documents"][0]
+        metadatas = results["metadatas"][0]
 
-        return f"[session_id: {session_id}]\n\n{answer}"
+        # Add the retrieved clauses to the stored clauses if they are not already included
+        for meta, chunk in zip(metadatas, chunks):
+            title_and_excerpt = f"Contract Title: {meta['contract_title']}\nContract Excerpt: {chunk}\n\n"
+
+            if title_and_excerpt not in clauses:
+                clauses.append(title_and_excerpt)
+
+        header = f"Session ID: {session_id}\n\n"
+
+        return header + "\n".join(clauses)
     except Exception as e:
         return f"Error answering question: {e}"
 
@@ -81,8 +85,8 @@ async def ask_contract(
     question: str, contract_title: str, session_id: str = None
 ) -> str:
     """
-    Ask a question about a specific contract. Retrieves the most relevant
-    clauses from the named contract and uses an LLM to generate an answer.
+    Ask a question about a specific contract. Returns the most relevant 
+    clauses for the host LLM to use when generating an answer.
     Use this when the user's question targets a single known contract.
 
     Supports multi-turn conversations: pass the session_id from a previous
@@ -108,16 +112,30 @@ async def ask_contract(
                 f"Use the list_contracts tool to see available contract titles."
             )
 
-        session_id, history, clauses = _get_or_create_session(session_id)
+        session_id, clauses = _get_or_create_session(session_id)
 
-        answer, history, clauses = await asyncio.to_thread(
-            generate_answer, question, contract_title, clauses, history
+        # To keep the context from balloning, limit the number of previously-retrieved
+        # clauses to 30
+        if len(clauses) > 30:
+            clauses[:] = clauses[-30:]
+
+        results = await asyncio.to_thread(
+            query_clauses, question, NUM_RESULTS, contract_title
         )
 
-        conversations[session_id] = history
-        session_clauses[session_id] = clauses
+        chunks = results["documents"][0]
+        metadatas = results["metadatas"][0]
 
-        return f"[session_id: {session_id}]\n\n{answer}"
+        # Add the retrieved clauses to the stored clauses if they are not already included
+        for meta, chunk in zip(metadatas, chunks):
+            title_and_excerpt = f"Contract Title: {meta['contract_title']}\nContract Excerpt: {chunk}\n\n"
+
+            if title_and_excerpt not in clauses:
+                clauses.append(title_and_excerpt)
+
+        header = f"Session ID: {session_id}\n\n"
+
+        return header + "\n".join(clauses)
     except Exception as e:
         return f"Error answering question: {e}"
 
@@ -126,10 +144,10 @@ async def ask_contract(
 async def compare_contracts(question: str, contract_titles: list[str]) -> str:
     """
     Compare two or more contracts with respect to a specific question or topic.
-    Retrieves relevant clauses from each named contract and uses an LLM to
-    generate a comparative analysis. Use this when the user wants to understand
+    Returns relevant clauses from each named contract for the host LLM to use when
+    generating a comparative analysis. Use this when the user wants to understand
     how contracts differ on a particular provision, term, or obligation.
-
+ 
     Args:
         question: The user's question or topic to compare across contracts
                   (e.g., "How do the termination clauses differ?").
@@ -138,23 +156,31 @@ async def compare_contracts(question: str, contract_titles: list[str]) -> str:
     try:
         if len(contract_titles) < 2:
             return "Please provide at least two contract titles to compare."
-
+ 
         # Validate all titles up front
         contracts = await asyncio.to_thread(list_matching_contracts)
         known_titles = {c["contract_title"] for c in contracts}
-
+ 
         invalid = [t for t in contract_titles if t not in known_titles]
         if invalid:
             return (
                 f"Contract(s) not found: {', '.join(invalid)}. "
                 f"Use the list_contracts tool to see available contract titles."
             )
-
-        answer = await asyncio.to_thread(
-            generate_comparison, question, contract_titles
-        )
-
-        return answer
+ 
+        # Query each contract separately so the results are balanced
+        # across contracts rather than skewed toward whichever is most relevant
+        sections = []
+        for title in contract_titles:
+            results = await asyncio.to_thread(
+                query_clauses, question, NUM_RESULTS, title
+            )
+            chunks = results["documents"][0]
+ 
+            excerpts = "\n\n".join(chunks)
+            sections.append(f"=== {title} ===\n{excerpts}")
+ 
+        return "\n\n".join(sections)
     except Exception as e:
         return f"Error comparing contracts: {e}"
 
@@ -245,29 +271,7 @@ async def list_contracts(party_name: str = None) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--provider",
-        choices=VALID_PROVIDERS,
-        default="ollama",
-        help="LLM provider to use: ollama (default), claude, or gemini",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help="Override the default model for the chosen provider",
-    )
-    args = parser.parse_args()
-
-    set_provider(args.provider, args.model)
-
-    # For debugging connection to Claude Desktop
-    print(
-        f"server.py: using provider '{args.provider}', "
-        f"about to start MCP server",
-        file=sys.stderr,
-    )
-    
+    print("server.py: about to start MCP server", file=sys.stderr)    
     mcp.run(transport="stdio")
 
 
