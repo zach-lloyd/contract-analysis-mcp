@@ -20,7 +20,7 @@ session_clauses: dict[str, list[str]] = {}
 
 def _get_or_create_session(
     session_id: str = None,
-) -> tuple[str, list[dict], list[str]]:
+) -> tuple[str, list[str]]:
     """
     Retrieve an existing session or create a new one. Centralizes the
     session-lookup logic so ask_contracts and ask_contract stay clean.
@@ -38,10 +38,14 @@ def _get_or_create_session(
 @mcp.tool()
 async def ask_contracts(question: str, session_id: str = None) -> str:
     """
-    Ask a question across all contracts in the database. Retrieves the most
-    relevant clauses from any contract and passes them to the LLM to generate an answer
-    based on those clauses. Use this when the user's question is not specific
-    to a single contract or when they want to search broadly.
+    Ask a question across all contracts in the database. Returns the most relevant 
+    clauses for the host LLM to use when generating an answer. Use this when the 
+    user's question is not specific to a single contract or when they want to search 
+    broadly.
+
+    Supports multi-turn conversations: pass the session_id from a previous
+    response to maintain conversation context for follow-up questions. If no
+    session_id is provided, a new session is created.
 
     Args:
         question: The user's natural language question about their contracts.
@@ -69,7 +73,9 @@ async def ask_contracts(question: str, session_id: str = None) -> str:
             if title_and_excerpt not in clauses:
                 clauses.append(title_and_excerpt)
 
-        return clauses
+        header = f"Session ID: {session_id}\n\n"
+
+        return header + "\n".join(clauses)
     except Exception as e:
         return f"Error answering question: {e}"
 
@@ -79,8 +85,8 @@ async def ask_contract(
     question: str, contract_title: str, session_id: str = None
 ) -> str:
     """
-    Ask a question about a specific contract. Retrieves the most relevant
-    clauses from the named contract and passes them to the LLM to generate an answer.
+    Ask a question about a specific contract. Returns the most relevant 
+    clauses for the host LLM to use when generating an answer.
     Use this when the user's question targets a single known contract.
 
     Supports multi-turn conversations: pass the session_id from a previous
@@ -127,7 +133,9 @@ async def ask_contract(
             if title_and_excerpt not in clauses:
                 clauses.append(title_and_excerpt)
 
-        return clauses
+        header = f"Session ID: {session_id}\n\n"
+
+        return header + "\n".join(clauses)
     except Exception as e:
         return f"Error answering question: {e}"
 
@@ -136,8 +144,8 @@ async def ask_contract(
 async def compare_contracts(question: str, contract_titles: list[str]) -> str:
     """
     Compare two or more contracts with respect to a specific question or topic.
-    Retrieves relevant clauses from each named contract and passes them to the LLM to
-    generate a comparative analysis. Use this when the user wants to understand
+    Returns relevant clauses from each named contract for the host LLM to use when
+    generating a comparative analysis. Use this when the user wants to understand
     how contracts differ on a particular provision, term, or obligation.
  
     Args:
