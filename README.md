@@ -83,32 +83,24 @@ The server exposes five tools:
 
 ## Testing
 
-The project includes five levels of testing:
+The project includes four levels of testing:
 
-**RAG Smoke tests** (`rag_smoke_test.py`) — Quick functional tests for the core RAG functions (querying, listing, answer generation, comparison). Can be run in `--db-only` mode to skip tests that require Ollama.
+**RAG Smoke tests** (`rag_smoke_test.py`) — Quick functional tests for the clause retrieval functions (querying and listing). To run these, from the src folder run:
 
 ```bash
-python testing/rag_smoke_test.py           # all tests
-python testing/rag_smoke_test.py --db-only  # ChromaDB tests only
+uv run python3 -m testing.rag_smoke_test          
 ```
 
-**Retrieval accuracy** (`query_testing.py`) — Samples question/answer pairs from the CUAD training set and measures how often the correct answer appears in the top-k retrieved chunks. Reports accuracy separately for conceptual questions (e.g., "Is there a non-compete clause?") and factual questions (e.g., "What is the effective date?").
+**Retrieval accuracy** (`query_testing.py`) — Samples question/answer pairs from the CUAD training set and measures how often the correct answer appears in the top-k retrieved chunks. Reports accuracy separately for conceptual questions (e.g., "Is there a non-compete clause?") and factual questions (e.g., "What is the effective date?"). To determine how much accuracy improves when additional results are retrieved, these tests run repeatedly with NUM_RESULTS set to each value between 1 and 10. This can be altered by tweaking the NUM_RESULTS parameter at the beginning of the file. To run these, run the below command in the src folder. **Note that these can take awhile to run, particularly when testing multiple values for NUM_RESULTS.**
 
 ```bash
-python testing/query_testing.py
+uv run python3 -m testing.query_testing
 ```
 
-**Generation quality** (`generation_testing.py`) — Generates answers for sampled questions using the full RAG pipeline, then uses an LLM judge to score each answer against the reference answer on a 1–5 scale for correctness and completeness, with the LLM judge also providing a one-sentence justification for its answer. Results are saved as timestamped JSON files for comparison across runs.
+**Integration tests** (`integration_testing.py`) — Spins up the MCP server and exercises each tool through the MCP client protocol, including happy-path and error-handling scenarios. Run the below in the src folder.
 
 ```bash
-python testing/generation_testing.py
-```
-
-**Integration tests** (`integration_testing.py`) — Spins up the MCP server and exercises each tool through the MCP client protocol, including happy-path and error-handling scenarios. Also supports `--db-only`.
-
-```bash
-python testing/integration_testing.py           # all tests
-python testing/integration_testing.py --db-only  # DB tests only
+uv run python3 -m testing.integration_testing
 ```
 
 **Manual end-to-end tests** - In addition to the above automated tests, I also performed extensive manual testing of the MCP after connecting it to Claude. After activating the MCP, I asked Claude the following question sequences:
@@ -146,13 +138,12 @@ python testing/integration_testing.py --db-only  # DB tests only
 ## Design Decisions
 
 - **Chunk size of 256 tokens with 80-token overlap** — chosen to balance retrieval precision (smaller chunks are easier to match) against having enough context for the LLM to produce a useful answer. The overlap helps avoid splitting important clauses across chunk boundaries.
-- **Sliding window of 10 conversation turns** — keeps multi-turn conversations functional without exhausting the model's context window. Older turns are dropped as new ones come in.
-- **Prompt rewriting for follow-ups** — follow-up questions like "What about the duration?" are rewritten into self-contained queries using the conversation history, which significantly improves retrieval quality on subsequent turns.
+- **Caching up to 30 contract clauses at a time** — maintains previously retrieved contract clauses to facilitate handling of ambiguous follow-up questions and help multi-turn conversations flow more smoothly.
 - **Separate querying per contract for comparisons** — ensures balanced representation across contracts rather than letting one contract dominate the retrieved results.
 - **ChromaDB for vector storage** — provides persistence and semantic search without the operational overhead of a full client-server database.
 
 ## Future Improvements
 
-- Add support for other models in the querying and generation phases. Right now, the MCP uses Qwen3:32b running locally for these phases. This is not ideal for several reasons: 1) many users will not be able to run a model of that size locally, 2) even those who can run it locally will often find that it slows down Claude's response time, and 3) it presents potential security issues. The latter point is not a significant issue as long as the MCP is used with publicly available sample contract databases like the CUAD dataset. But the real value of this MCP lies in applying it to actual real-world contract databases where security will be imperative. Adding the ability to swap out Qwen for another model like Claude or Gemini via API calls is at the top of my list for future improvements.
 - Add support for custom contract databases. As noted in the prior bullet, the real value of this MCP is realized when users can use it with their own contract databases. A valuable future project would be to create a simple way for users to input and format their own database of contracts in a way that is compatible with this MCP. This would require putting the contracts into the same format used by the CUAD dataset.
 - The list_contracts tool is workable for a database with ~500 contracts, which is the size of the CUAD dataset. However, for much larger datasets, it probably wouldn't be workable. Limiting it to listing the first ~50-100 matching contracts would probably be a more robust solution.
+- Add some automated generation testing in addition to the manual testing I described above. This might be complicated but could be accomplished by giving a separate LLM the relevant contract clauses and the client LLM's answer and asking the separate LLM to grade the client's answer on a scale of 1-5 and provide a one-sentence justification for its answer.
