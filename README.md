@@ -2,15 +2,13 @@
 
 A retrieval-augmented generation (RAG) system for analyzing legal contracts, exposed as an [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server. It lets an LLM-powered assistant answer natural-language questions about a corpus of contracts, compare provisions across agreements, and locate specific clause types.
 
-The project uses the [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) as its contract corpus, ChromaDB for vector storage and retrieval, and Ollama with the Qwen3 32B model for generation.
+The project uses the [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) as its contract corpus and ChromaDB for vector storage and retrieval, and can be connected to any MCP-compatible client (including frontier LLMs like Claude and ChatGPT, as well as open-source models).
 
 ## How It Works
 
-Contracts are loaded from the CUAD dataset, split into overlapping token-level chunks, and indexed into a ChromaDB collection. The title of each contract and the names of the parties are also stored in the collection as metadata. At query time, the system retrieves the most relevant chunks for a given question, assembles them into a prompt, and passes them to an LLM to generate a grounded answer.
+Contracts are loaded from the CUAD dataset, split into overlapping token-level chunks, and indexed into a ChromaDB collection. The title of each contract and the names of the parties are also stored in the collection as metadata. At query time, the system retrieves the most relevant chunks for a given question and passes them to the client LLM to generate a grounded answer.
 
-The RAG pipeline supports multi-turn conversations through a sliding-window history mechanism: follow-up questions are rewritten into self-contained queries using the conversation context, and previously retrieved clauses are carried forward so the model can reference them across turns.
-
-The whole pipeline is wrapped in an MCP server so that any MCP-compatible client (such as Claude Desktop) can call it as a set of tools.
+The MCP helps preserve conversation history to facilitate smooth multi-turn workflows by caching up to 30 previously-retrieved contract clauses at a time so the model can reference them across turns.
 
 ## Brief Demo
 
