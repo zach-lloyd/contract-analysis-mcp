@@ -12,7 +12,7 @@ The MCP helps preserve conversation history to facilitate smooth multi-turn work
 
 ## Brief Demo
 
-https://github.com/user-attachments/assets/ffd40fdd-331d-45e2-a98b-8bfb44ce2972
+https://github.com/user-attachments/assets/6e4fb023-72c6-4f74-b13b-30104ffb7d8f
 
 ## MCP Tools
 
