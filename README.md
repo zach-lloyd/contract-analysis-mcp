@@ -22,7 +22,7 @@ The server exposes five tools:
 
 **`ask_contract`** — Ask a question about a specific contract by title. Restricts retrieval to that single agreement. Also supports clause caching via a `session_id`.
 
-**`compare_contracts`** — Compare two or more contracts on a given topic. Returns the most relevant clauses for each contract so the client LLM can produce a side-by-side analysis. Each contract is queried independently so results are balanced, and the LLM produces a side-by-side comparative analysis.
+**`compare_contracts`** — Compare two or more contracts on a given topic. Returns the most relevant clauses for each contract so the client LLM can produce a side-by-side analysis. Each contract is queried independently so results are balanced.
 
 **`find_contract_clauses`** — Search for a specific clause type (e.g., "termination", "governing law", "non-compete") across all contracts or within a single contract. Returns the raw excerpts and their source contract titles.
 
