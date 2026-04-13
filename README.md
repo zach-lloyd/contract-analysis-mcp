@@ -4,7 +4,7 @@ A retrieval-augmented generation (RAG) system for analyzing legal contracts, exp
 
 The project uses the [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) as its contract corpus and ChromaDB for vector storage and retrieval, and can be connected to any MCP-compatible client (including frontier LLMs like Claude and ChatGPT, as well as open-source models).
 
-This project evolved from a legal RAG agent that I previously built, which is located in [this repo] (https://github.com/zach-lloyd/legal-contract-rag).
+This project evolved from a legal RAG agent that I previously built, which is located in [this repo](https://github.com/zach-lloyd/legal-contract-rag).
 
 ## How It Works
 
