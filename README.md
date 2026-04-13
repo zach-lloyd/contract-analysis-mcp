@@ -18,11 +18,11 @@ https://github.com/user-attachments/assets/6e4fb023-72c6-4f74-b13b-30104ffb7d8f
 
 The server exposes five tools:
 
-**`ask_contracts`** — Ask a question across all contracts in the database. Returns an answer synthesized from the most relevant clauses found anywhere in the corpus. Supports multi-turn conversation via a `session_id`.
+**`ask_contracts`** — Ask a question across all contracts in the database. Returns the most relevant clauses for the client LLM to use when generating an answer. Supports clause caching via a `session_id`.
 
-**`ask_contract`** — Ask a question about a specific contract by title. Restricts retrieval to that single agreement. Also supports multi-turn conversation via a `session_id`.
+**`ask_contract`** — Ask a question about a specific contract by title. Restricts retrieval to that single agreement. Also supports clause caching via a `session_id`.
 
-**`compare_contracts`** — Compare two or more contracts on a given topic. Each contract is queried independently so results are balanced, and the LLM produces a side-by-side comparative analysis.
+**`compare_contracts`** — Compare two or more contracts on a given topic. Returns the most relevant clauses for each contract so the client LLM can produce a side-by-side analysis. Each contract is queried independently so results are balanced, and the LLM produces a side-by-side comparative analysis.
 
 **`find_contract_clauses`** — Search for a specific clause type (e.g., "termination", "governing law", "non-compete") across all contracts or within a single contract. Returns the raw excerpts and their source contract titles.
 
@@ -68,14 +68,20 @@ The server exposes five tools:
 
    This loads all contracts from CUAD, chunks them into ~256-token segments with 80-token overlap, and indexes them into a persistent ChromaDB collection. Only needs to be run once.
 
-4. Connect the MCP server to an MCP client. For Claude Desktop, you would add the following to claude_desktop_config.json:
+3. Connect the MCP server to an MCP client. For Claude Desktop, you would add the following to claude_desktop_config.json:
 
 ```json
 {
   "mcpServers": {
     "contracts": {
-      "command": "uv", # You may need to substitute your absolute uv path here
-      "args": ["run", "--directory", "python3", "path/to/rag/server.py"]
+      "command": "/Users/zachlloyd/.local/bin/uv",
+      "args": [
+        "run",
+        "--directory",
+        "[LOCATION WHERE THIS MCP IS SAVED]", # Replace this with the path for the project's root folder (e.g., "/Users/my-name/contract-analysis-mcp")
+        "python3",
+        "src/rag/server.py"
+      ]
     }
   }
 }
