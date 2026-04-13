@@ -35,12 +35,11 @@ The server exposes five tools:
 ├── src/
 │  ├── rag/
 │  │   ├── chunker.py          # Loads CUAD contracts, chunks them, indexes into ChromaDB
-│  │   ├── rag_core.py         # Core RAG logic: query, prompt rewriting, answer generation
+│  │   ├── rag_core.py         # Core clause retrieval logic; retrieves contract clauses based on user's question
 │  │   ├── server.py           # MCP server exposing the five tools above
 │  │   └── chroma_data/        # ChromaDB persistent storage (generated)
 │  └── testing/
 │      ├── query_testing.py        # Measures retrieval accuracy (conceptual vs. factual)
-│      ├── generation_testing.py   # Scores generated answers against reference answers
 │      ├── rag_smoke_test.py       # Smoke tests for rag_core functions
 │      └── integration_testing.py  # Integration tests for the MCP server tools
 └── README.md
@@ -49,7 +48,7 @@ The server exposes five tools:
 ## Prerequisites
 
 - **Python 3.10+**
-- **[Ollama](https://ollama.com/)** with the `qwen3:32b` model pulled (`ollama pull qwen3:32b`)
+- **Client LLM (either Claude Desktop or some other MCP-compatible LLM)**
 - **[uv](https://docs.astral.sh/uv/)** (used to run the MCP server)
 - The **CUAD dataset** — download `CUADv1.json` and `train_separate_questions.json` and place them in `cuad/data/`
 
@@ -58,16 +57,10 @@ The server exposes five tools:
 1. **Install dependencies:**
 
    ```bash
-   pip install chromadb ollama langchain-text-splitters tiktoken mcp
+   pip install chromadb langchain-text-splitters tiktoken mcp
    ```
 
-2. **Pull the model:**
-
-   ```bash
-   ollama pull qwen3:32b
-   ```
-
-3. **Build the vector database:**
+2. **Build the vector database:**
 
    ```bash
    python3 rag/chunker.py
@@ -75,17 +68,7 @@ The server exposes five tools:
 
    This loads all contracts from CUAD, chunks them into ~256-token segments with 80-token overlap, and indexes them into a persistent ChromaDB collection. Only needs to be run once.
 
-4. **Run the MCP server:**
-
-   ```bash
-   uv run python3 rag/server.py
-   ```
-
-   The server communicates over stdio and is designed to be connected to an MCP client such as Claude Desktop.
-
-## Connecting to Claude Desktop
-
-Add the server to your Claude Desktop MCP configuration:
+4. Connect the MCP server to an MCP client. For Claude Desktop, you would add the following to claude_desktop_config.json:
 
 ```json
 {
@@ -97,13 +80,6 @@ Add the server to your Claude Desktop MCP configuration:
   }
 }
 ```
-
-Once connected, you can ask Claude questions like:
-
-- *"What contracts involve Acme Corp?"*
-- *"What is the governing law in the Birch Communications contract?"*
-- *"How do the termination clauses differ between these two agreements?"*
-- *"Find all non-compete clauses across the database."*
 
 ## Testing
 
