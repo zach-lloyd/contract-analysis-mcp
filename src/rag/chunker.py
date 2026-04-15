@@ -106,15 +106,18 @@ def print_sample_chunks(chunks: list[dict[str, str]], num_samples: int) -> None:
 
 def create_collection(
         chunks: list[dict[str, str]], 
+        collection_name: str = "legal_contracts",
         batch_size: int = 5000
         ) -> chromadb.Collection:
     """
     Adds the contract chunks and metadata to a chromadb collection. I used chromadb for 
     vector storage because it offers persistence without being overkill like a full 
     client-server database would be.
-
+ 
     Args:
         chunks: The list of contract chunks to be added to the collection.
+        collection_name: Optional. The name of the ChromaDB collection to create
+                         or add to. Defaults to 'legal_contracts'.
         batch_size: Optional. Add chunks in batches of the specified size for efficiency.
                     Defaults to 5000.
     """
@@ -123,8 +126,8 @@ def create_collection(
     # that arose when I tried to run my rag testing code from the src folder
     _db_path = str(Path(__file__).parent / "chroma_data")
     client = chromadb.PersistentClient(path=_db_path)
-    collection = client.get_or_create_collection(name="legal_contracts")
-
+    collection = client.get_or_create_collection(name=collection_name)
+ 
     if collection.count() == 0:
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]

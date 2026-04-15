@@ -6,12 +6,37 @@ from pathlib import Path
 # that arose when I tried to run my rag testing code from the src folder
 _DB_PATH = str(Path(__file__).parent / "chroma_data")
 CLIENT = chromadb.PersistentClient(path=_DB_PATH)
-COLLECTION = CLIENT.get_or_create_collection(name="legal_contracts")
 NUM_RESULTS = 10
+
+DEFAULT_COLLECTION = "legal_contracts"
+
+# Cache of opened collections so we don't reopen the same one on every call
+_collections: dict[str, chromadb.Collection] = {}
+
+
+def get_collection(name: str = DEFAULT_COLLECTION) -> chromadb.Collection:
+    """
+    Retrieve a ChromaDB collection by name, caching it for reuse.
+
+    Args:
+        name: Optional. The name of the collection to retrieve. Defaults to 
+              'legal_contracts'.
+    """
+    if name not in _collections:
+        _collections[name] = CLIENT.get_or_create_collection(name=name)
+    return _collections[name]
+
+
+def list_collections() -> list[str]:
+    """
+    List the names of all ChromaDB collections in the database.
+    """
+    return [c.name for c in CLIENT.list_collections()]
 
 
 def query_clauses(
-        question: str, num_results: int, contract_title: str = None
+        question: str, num_results: int, contract_title: str = None,
+        collection_name: str = DEFAULT_COLLECTION
 ) ->  chromadb.QueryResult:
     """
     Query the contract database for the chunks that are most relevant to the 
@@ -23,15 +48,19 @@ def query_clauses(
         contract_title: Optional. If present, limit the search to a specific 
                         contract. If not, search across all contracts in the
                         database.
+        collection_name: Optional. The ChromaDB collection to query. Defaults
+                         to 'legal_contracts'.
     """
+    collection = get_collection(collection_name)
+
     if contract_title:
-        results = COLLECTION.query(
+        results = collection.query(
             query_texts=[question],
             n_results=num_results,
             where={"contract_title": contract_title}
         )
     else:
-        results = COLLECTION.query(
+        results = collection.query(
             query_texts=[question],
             n_results=num_results
         )
@@ -39,7 +68,10 @@ def query_clauses(
     return results
 
 
-def list_matching_contracts(party_name: str = None) -> list[dict[str, str]]:
+def list_matching_contracts(
+        party_name: str = None,
+        collection_name: str = DEFAULT_COLLECTION
+) -> list[dict[str, str]]:
     """
     List all contracts in the database, or only those involving a specific party.
     Returns deduplicated contract titles and their associated parties.
@@ -47,14 +79,18 @@ def list_matching_contracts(party_name: str = None) -> list[dict[str, str]]:
     Args:
         party_name: Optional. If provided, only return contracts where this party
                     appears in the parties metadata. If omitted, return all contracts.
+        collection_name: Optional. The ChromaDB collection to query. Defaults
+                         to 'legal_contracts'.
     """
+    collection = get_collection(collection_name)
+
     seen = {}
     batch_size = 5000
     offset = 0
 
     # Paginate through all metadata to avoid SQLite variable limits
     while True:
-        batch = COLLECTION.get(
+        batch = collection.get(
             include=["metadatas"],
             limit=batch_size,
             offset=offset
