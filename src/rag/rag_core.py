@@ -8,19 +8,16 @@ _DB_PATH = str(Path(__file__).parent / "chroma_data")
 CLIENT = chromadb.PersistentClient(path=_DB_PATH)
 NUM_RESULTS = 10
 
-DEFAULT_COLLECTION = "legal_contracts"
-
 # Cache of opened collections so we don't reopen the same one on every call
 _collections: dict[str, chromadb.Collection] = {}
 
 
-def get_collection(name: str = DEFAULT_COLLECTION) -> chromadb.Collection:
+def get_collection(name: str) -> chromadb.Collection:
     """
     Retrieve a ChromaDB collection by name, caching it for reuse.
 
     Args:
-        name: Optional. The name of the collection to retrieve. Defaults to 
-              'legal_contracts'.
+        name: The name of the collection to retrieve.
     """
     if name not in _collections:
         _collections[name] = CLIENT.get_or_create_collection(name=name)
@@ -35,8 +32,7 @@ def list_collections() -> list[str]:
 
 
 def query_clauses(
-        question: str, num_results: int, contract_title: str = None,
-        collection_name: str = DEFAULT_COLLECTION
+        question: str, num_results: int, collection_name: str, contract_title: str = None
 ) ->  chromadb.QueryResult:
     """
     Query the contract database for the chunks that are most relevant to the 
@@ -45,11 +41,11 @@ def query_clauses(
     Args:
         question: The user's question.
         num_results: The number of contract chunks for the query to return.
+        collection_name: The ChromaDB collection to query.
         contract_title: Optional. If present, limit the search to a specific 
                         contract. If not, search across all contracts in the
                         database.
-        collection_name: Optional. The ChromaDB collection to query. Defaults
-                         to 'legal_contracts'.
+        
     """
     collection = get_collection(collection_name)
 
@@ -69,18 +65,17 @@ def query_clauses(
 
 
 def list_matching_contracts(
-        party_name: str = None,
-        collection_name: str = DEFAULT_COLLECTION
+        collection_name: str,
+        party_name: str = None
 ) -> list[dict[str, str]]:
     """
     List all contracts in the database, or only those involving a specific party.
     Returns deduplicated contract titles and their associated parties.
  
     Args:
+        collection_name: The ChromaDB collection to query. 
         party_name: Optional. If provided, only return contracts where this party
                     appears in the parties metadata. If omitted, return all contracts.
-        collection_name: Optional. The ChromaDB collection to query. Defaults
-                         to 'legal_contracts'.
     """
     collection = get_collection(collection_name)
 

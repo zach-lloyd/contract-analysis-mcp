@@ -4,7 +4,6 @@ from rag_core import (
     list_matching_contracts,
     list_collections as list_all_collections,
     NUM_RESULTS,
-    DEFAULT_COLLECTION
 )
 from uuid import uuid4
 import asyncio
@@ -39,8 +38,7 @@ def _get_or_create_session(
 
 @mcp.tool()
 async def ask_contracts(
-    question: str, session_id: str = None,
-    collection_name: str = DEFAULT_COLLECTION
+    question: str, collection_name: str, session_id: str = None
 ) -> str:
     """
     Ask a question across all contracts in the database. Returns the most relevant 
@@ -51,16 +49,18 @@ async def ask_contracts(
     Supports multi-turn conversations: pass the session_id from a previous
     response to maintain conversation context for follow-up questions. If no
     session_id is provided, a new session is created.
+
+    If a contract is not found in one collection, call list_collections and retry 
+    across other collections before concluding the contract doesn't exist.
  
     Args:
         question: The user's natural language question about their contracts.
+        collection_name: The name of the contract collection to search. Use the 
+                         list_collections tool to see available collections.
         session_id: Optional. The session ID returned by a previous call.
                     Pass this to include clauses retrieved from previous turns 
                     of the conversation in the context. If omitted, a new session 
                     is created.
-        collection_name: Optional. The name of the contract collection to search.
-                         Defaults to 'legal_contracts'. Use the list_collections
-                         tool to see available collections.
     """
     try:
         session_id, clauses = _get_or_create_session(session_id)
@@ -70,7 +70,7 @@ async def ask_contracts(
             clauses[:] = clauses[-30:]
  
         results = await asyncio.to_thread(
-            query_clauses, question, NUM_RESULTS, None, collection_name
+            query_clauses, question, NUM_RESULTS, collection_name, None 
         )
  
         chunks = results["documents"][0]
@@ -92,8 +92,7 @@ async def ask_contracts(
  
 @mcp.tool()
 async def ask_contract(
-    question: str, contract_title: str, session_id: str = None,
-    collection_name: str = DEFAULT_COLLECTION
+    question: str, contract_title: str, collection_name: str, session_id: str = None
 ) -> str:
     """
     Ask a question about a specific contract. Returns the most relevant 
@@ -103,22 +102,24 @@ async def ask_contract(
     Supports multi-turn conversations: pass the session_id from a previous
     response to maintain conversation context for follow-up questions. If no
     session_id is provided, a new session is created.
+
+    If a contract is not found in one collection, call list_collections and retry 
+    across other collections before concluding the contract doesn't exist.
  
     Args:
         question: The user's natural language question about the contract.
         contract_title: The exact title of the contract to search within.
+        collection_name: The name of the contract collection to search. Use the 
+                         list_collections tool to see available collections.
         session_id: Optional. The session ID returned by a previous call.
                     Pass this to continue a conversation with follow-up
                     questions. If omitted, a new session is created.
-        collection_name: Optional. The name of the contract collection to search.
-                         Defaults to 'legal_contracts'. Use the list_collections
-                         tool to see available collections.
     """
     try:
         # Verify the contract exists before querying to give a clear error
         # message rather than an empty or confusing LLM response
         contracts = await asyncio.to_thread(
-            list_matching_contracts, None, collection_name
+            list_matching_contracts, collection_name, None
         )
         known_titles = {c["contract_title"] for c in contracts}
  
@@ -136,7 +137,7 @@ async def ask_contract(
             clauses[:] = clauses[-30:]
  
         results = await asyncio.to_thread(
-            query_clauses, question, NUM_RESULTS, contract_title, collection_name
+            query_clauses, question, NUM_RESULTS, collection_name, contract_title 
         )
  
         chunks = results["documents"][0]
@@ -159,21 +160,23 @@ async def ask_contract(
 @mcp.tool()
 async def compare_contracts(
     question: str, contract_titles: list[str],
-    collection_name: str = DEFAULT_COLLECTION
+    collection_name: str
 ) -> str:
     """
     Compare two or more contracts with respect to a specific question or topic.
     Returns relevant clauses from each named contract for the host LLM to use when
     generating a comparative analysis. Use this when the user wants to understand
     how contracts differ on a particular provision, term, or obligation.
+
+    If a contract is not found in one collection, call list_collections and retry 
+    across other collections before concluding the contract doesn't exist.
  
     Args:
         question: The user's question or topic to compare across contracts
                   (e.g., "How do the termination clauses differ?").
         contract_titles: A list of exact contract titles to compare.
-        collection_name: Optional. The name of the contract collection to search.
-                         Defaults to 'legal_contracts'. Use the list_collections
-                         tool to see available collections.
+        collection_name: The name of the contract collection to search. Use the 
+                         list_collections tool to see available collections.
     """
     try:
         if len(contract_titles) < 2:
@@ -181,7 +184,7 @@ async def compare_contracts(
  
         # Validate all titles up front
         contracts = await asyncio.to_thread(
-            list_matching_contracts, None, collection_name
+            list_matching_contracts, collection_name, None
         )
         known_titles = {c["contract_title"] for c in contracts}
  
@@ -197,7 +200,7 @@ async def compare_contracts(
         sections = []
         for title in contract_titles:
             results = await asyncio.to_thread(
-                query_clauses, question, NUM_RESULTS, title, collection_name
+                query_clauses, question, NUM_RESULTS, collection_name, title 
             )
             chunks = results["documents"][0]
  
@@ -211,8 +214,7 @@ async def compare_contracts(
  
 @mcp.tool()
 async def find_contract_clauses(
-    clause_type: str, contract_title: str = None,
-    collection_name: str = DEFAULT_COLLECTION
+    clause_type: str, collection_name: str, contract_title: str = None
 ) -> str:
     """
     Find clauses of a specific type across all contracts or within a single
@@ -223,16 +225,15 @@ async def find_contract_clauses(
     Args:
         clause_type: The type of clause to search for (e.g., "non-compete",
                      "termination", "indemnification", "governing law").
+        collection_name: The name of the contract collection to search. Use the 
+                         list_collections tool to see available collections.
         contract_title: Optional. If provided, restricts the search to this
                         specific contract. If omitted, searches all contracts.
-        collection_name: Optional. The name of the contract collection to search.
-                         Defaults to 'legal_contracts'. Use the list_collections
-                         tool to see available collections.
     """
     try:
         if contract_title:
             contracts = await asyncio.to_thread(
-                list_matching_contracts, None, collection_name
+                list_matching_contracts, collection_name, None
             )
             known_titles = {c["contract_title"] for c in contracts}
  
@@ -243,7 +244,7 @@ async def find_contract_clauses(
                 )
  
         results = await asyncio.to_thread(
-            query_clauses, clause_type, NUM_RESULTS, contract_title, collection_name
+            query_clauses, clause_type, NUM_RESULTS, collection_name, contract_title 
         )
  
         chunks = results["documents"][0]
@@ -266,8 +267,8 @@ async def find_contract_clauses(
  
 @mcp.tool()
 async def list_contracts(
-    party_name: str = None,
-    collection_name: str = DEFAULT_COLLECTION
+    collection_name: str,
+    party_name: str = None
 ) -> str:
     """
     List all contracts available in the database or all contracts to which the named
@@ -278,13 +279,12 @@ async def list_contracts(
     Args:
         party_name: Optional. If provided, lists all contracts where the specified
                     party is a party to the contract. If omitted, lists all contracts.
-        collection_name: Optional. The name of the contract collection to search.
-                         Defaults to 'legal_contracts'. Use the list_collections
-                         tool to see available collections.
+        collection_name: The name of the contract collection to search. Use the 
+                         list_collections tool to see available collections.
     """
     try:
         contracts = await asyncio.to_thread(
-            list_matching_contracts, party_name, collection_name
+            list_matching_contracts, collection_name, party_name
         )
  
         if not contracts:

@@ -14,12 +14,10 @@ Usage:
 
 import argparse
 import sys
-from pathlib import Path
 
-import chromadb
-
-from extract import load_contracts_from_directory
+from ingestion.extract import load_contracts_from_directory
 from rag.chunker import chunk_contracts, create_collection
+from rag.rag_core import CLIENT
 
 
 def main():
@@ -74,14 +72,14 @@ def main():
     print(f"Created {len(chunks)} chunks from {len(contracts)} contracts")
 
     # --- Index ---
-    db_path = str(Path(__file__).parent / "chroma_data")
-    client = chromadb.PersistentClient(path=db_path)
-
     if args.rebuild:
-        client.delete_collection(args.collection)
-        print(f"Deleted existing collection '{args.collection}' (--rebuild)")
+        try:
+            CLIENT.delete_collection(args.collection)
+            print(f"Deleted existing collection '{args.collection}' (--rebuild)")
+        except Exception:
+            pass  # collection didn't exist, which is fine for --rebuild
     else:
-        existing = client.get_or_create_collection(args.collection)
+        existing = CLIENT.get_or_create_collection(args.collection)
         if existing.count() > 0:
             print(
                 f"Collection '{args.collection}' already contains "
