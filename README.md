@@ -8,7 +8,7 @@ This project evolved from a legal RAG agent that I previously built, which is lo
 
 ## How It Works
 
-In the command line, point ingest.py at the folder containing your contracts and run it. The ingestion and extraction code will take your contracts as input and split each of them into overlapping token-level chunks, indexed into a ChromaDB collection. You have the option to include a metadata json file that includes the title of each contract and the names of its parties. If no such file is included, the program will extract the title of each contract from its filename and store it as metadata (no party names will be stored as metadata unless manually specified in a metadata.json file). 
+In the command line, run ingest.py while specifying the folder containing your contracts, as described in the Setup section below. The ingestion and extraction code will take your contracts as input and split each of them into overlapping token-level chunks, indexed into a ChromaDB collection. You have the option to include a metadata json file that includes the title of each contract and the names of its parties. If no such file is included, the program will extract the title of each contract from its filename and store it as metadata (no party names will be stored as metadata unless manually specified in a metadata.json file). 
 
 At query time, the system retrieves the most relevant chunks for a given question and passes them to the client LLM to generate a grounded answer. The MCP helps preserve conversation history to facilitate smooth multi-turn workflows by caching up to 30 previously-retrieved contract clauses at a time so the model can reference them across turns.
 
@@ -63,7 +63,7 @@ The server exposes five tools:
 - **Python 3.10+**
 - **Client LLM (either Claude Desktop or some other MCP-compatible LLM)**
 - **[uv](https://docs.astral.sh/uv/)** (used to run the MCP server)
-- The **[Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) dataset** — download `CUADv1.json` and `train_separate_questions.json` and place them in `cuad/data/`
+- If you want to run query_testing.py, the **[Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) dataset** — download `CUADv1.json` and `train_separate_questions.json` and place them in `cuad/data/`
 
 ## Setup
 
@@ -95,17 +95,17 @@ From the src folder, run:
    
 3. **Connect the MCP server to an MCP client.**
 
-For example, if you wanted to connect this server to Claude Desktop, you would add the following to claude_desktop_config.json:
+For example, if you wanted to connect this server to Claude Desktop, you would add the below to claude_desktop_config.json. Replace "[PATH TO UV]" with the path to the folder where uv is saved (e.g., "/Users/your-name/.local/bin/uv") and replace "[LOCATION WHERE THIS MCP IS SAVED]" with the path to where you cloned the repo on your system (e.g., "/Users/your-name/contract-analysis-mcp").
 
 ```json
 {
   "mcpServers": {
     "contracts": {
-      "command": "[PATH TO UV]", # e.g., "/Users/your-name/.local/bin/uv"
+      "command": "[PATH TO UV]", 
       "args": [
         "run",
         "--directory",
-        "[LOCATION WHERE THIS MCP IS SAVED]", # Replace this with the path for the project's root folder (e.g., "/Users/your-name/contract-analysis-mcp")
+        "[LOCATION WHERE THIS MCP IS SAVED]", 
         "python3",
         "src/rag/server.py"
       ]
@@ -187,7 +187,7 @@ uv run python3 -m testing.integration_testing
 - **Caching up to 30 contract clauses at a time** — maintains previously retrieved contract clauses to facilitate handling of ambiguous follow-up questions and help multi-turn conversations flow more smoothly.
 - **Separate querying per contract for comparisons** — ensures balanced representation across contracts rather than letting one contract dominate the retrieved results.
 - **ChromaDB for vector storage** — provides persistence and semantic search without the operational overhead of a full client-server database.
-- **Support metadata storage via a metadata.json file** - provides the ability for users to add additional information about their contracts that will help the LLM locate the correct contracts and accurately answer questions about them. This solution is a bit technical and cumbersome, but for now, it is the most straightforward way to implement the ability for users to add this information.
+- **Support metadata storage via a metadata.json file** - provides the ability for users to add additional information about their contracts that will help the LLM locate the correct contracts and accurately answer questions about them. This is a lightweight and straightforward solution that avoids requiring a separate UI or additional LLM calls.
 - **Support ingestion and extraction from .pdf and .docx files** - by far the most common contract types. I would have liked to also include support for older .doc files, but those are a bit trickier to deal with and converting .doc files to .docx files is fairly easy, so for now I think .docx support is sufficient.
 
 ## Future Improvements
