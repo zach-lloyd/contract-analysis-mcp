@@ -1,16 +1,20 @@
-# Legal Contract RAG — MCP Server
+# Legal Contract MCP Server
 
-A retrieval-augmented generation (RAG) system for analyzing legal contracts, exposed as an [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server. It lets an LLM-powered assistant answer natural-language questions about a corpus of contracts, compare provisions across agreements, and locate specific clause types.
+An end-to-end pipeline that allows users to create a database from a folder of contracts and connect it to an LLM via a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server. It lets an LLM-powered assistant answer natural-language questions about the user's corpus of contracts, compare provisions across agreements, and locate specific clause types.
 
-The project uses the [Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) as its contract corpus and ChromaDB for vector storage and retrieval, and can be connected to any MCP-compatible client (including frontier LLMs like Claude and ChatGPT, as well as open-source models).
+The project uses ChromaDB for vector storage and retrieval, and can be connected to any MCP-compatible client (including frontier LLMs like Claude and ChatGPT, as well as open-source models).
 
 This project evolved from a legal RAG agent that I previously built, which is located in [this repo](https://github.com/zach-lloyd/legal-contract-rag).
 
 ## How It Works
 
-Contracts are loaded from the CUAD dataset, split into overlapping token-level chunks, and indexed into a ChromaDB collection. The title of each contract and the names of the parties are also stored in the collection as metadata. At query time, the system retrieves the most relevant chunks for a given question and passes them to the client LLM to generate a grounded answer.
+In the command line, point ingest.py at the folder containing your contracts and run it. The ingestion and extraction code will take your contracts as input and split each of them into overlapping token-level chunks, indexed into a ChromaDB collection. You have the option to include a metadata json file that includes the title of each contract and the names of its parties. If no such file is included, the program will extract the title of each contract from its filename and store it as metadata (no party names will be stored as metadata unless manually specified in a metadata.json file). 
 
-The MCP helps preserve conversation history to facilitate smooth multi-turn workflows by caching up to 30 previously-retrieved contract clauses at a time so the model can reference them across turns.
+At query time, the system retrieves the most relevant chunks for a given question and passes them to the client LLM to generate a grounded answer. The MCP helps preserve conversation history to facilitate smooth multi-turn workflows by caching up to 30 previously-retrieved contract clauses at a time so the model can reference them across turns.
+
+Support for multiple collections of contracts is included, so you can divide your contracts based on client, contract type, etc.
+
+**NOTE: At this time, the system only supports .pdf and .docx files. If you want to upload contracts that are .doc files or more exotic filetypes, you will first need to convert them to one of the supported file types**
 
 ## Brief Demo
 
@@ -35,15 +39,22 @@ The server exposes five tools:
 ```
 .
 ├── src/
+│  ├── ingestion/
+│  │   ├── extract.py                             # Extracts text from contracts and puts it in the format the chunker expects
+│  │   └── ingest.py                              # CLI entrypoint for ingesting user contracts
 │  ├── rag/
-│  │   ├── chunker.py          # Loads CUAD contracts, chunks them, indexes into ChromaDB
-│  │   ├── rag_core.py         # Core clause retrieval logic; retrieves contract clauses based on user's question
-│  │   ├── server.py           # MCP server exposing the five tools above
-│  │   └── chroma_data/        # ChromaDB persistent storage (generated)
+│  │   ├── chunker.py                             # Loads CUAD contracts, chunks them, indexes into ChromaDB
+│  │   ├── rag_core.py                            # Core clause retrieval logic; retrieves contract clauses based on user's question
+│  │   ├── server.py                              # MCP server exposing the five tools above
+│  │   └── chroma_data/                           # ChromaDB persistent storage (generated)
 │  └── testing/
-│      ├── query_testing.py        # Measures retrieval accuracy (conceptual vs. factual)
-│      ├── rag_smoke_test.py       # Smoke tests for rag_core functions
-│      └── integration_testing.py  # Integration tests for the MCP server tools
+│      ├── extraction_manual_inspection.py        # Prints excerpts of the first few contracts for manual confirmation that text was extracted correctly
+│      ├── extraction_smoke_test.py               # Smoke tests for extraction functions
+│      ├── extraction_testing.py                  # Validation tests for extraction module using CUAD dataset
+│      ├── query_testing.py                       # Measures retrieval accuracy (conceptual vs. factual) using CUAD dataset
+│      ├── rag_smoke_test.py                      # Smoke tests for rag_core functions
+│      ├── integration_testing.py                 # Integration tests for the MCP server tools
+│      └── test-contracts/                        # Sample library of publicly-available contracts for use in extraction_testing
 └── README.md
 ```
 
@@ -52,35 +63,49 @@ The server exposes five tools:
 - **Python 3.10+**
 - **Client LLM (either Claude Desktop or some other MCP-compatible LLM)**
 - **[uv](https://docs.astral.sh/uv/)** (used to run the MCP server)
-- The **CUAD dataset** — download `CUADv1.json` and `train_separate_questions.json` and place them in `cuad/data/`
+- The **[Contract Understanding Atticus Dataset (CUAD)](https://www.atticusprojectai.org/cuad) dataset** — download `CUADv1.json` and `train_separate_questions.json` and place them in `cuad/data/`
 
 ## Setup
 
 1. **Install dependencies:**
 
    ```bash
-   pip install chromadb langchain-text-splitters tiktoken mcp
+   uv pip install chromadb langchain-text-splitters tiktoken mcp
    ```
 
-2. **Build the vector database:**
+2. **Run ingest.py pointed at your contract folder to build the collection:**
+
+From the src folder, run:
 
    ```bash
-   python3 rag/chunker.py
+   uv run python3 -m ingestion.ingest path/to/contract-folder \
+    --metadata path/to/metadata.json \ 
+    --collection collection-name 
    ```
 
-   This loads all contracts from CUAD, chunks them into ~256-token segments with 80-token overlap, and indexes them into a persistent ChromaDB collection. Only needs to be run once.
+   This loads all contracts in the specified folder, chunks them into ~256-token segments with 80-token overlap, and indexes them into a persistent ChromaDB collection.
 
-3. Connect the MCP server to an MCP client. For Claude Desktop, you would add the following to claude_desktop_config.json:
+   Providing a metadata.json file is optional but strongly recommended in order to ensure the system has accurate titles and party names.
+
+   Providing a collection name is optional but also strongly recommended. If you do not provide a collection name, it will give your collection the default name legal_contracts.
+
+   If you want to update a collection that has already been created, you must also include the --rebuild flag.
+
+   **IMPORTANT: When you include the --rebuild flag, the current version of the specified collection will be overwritten.**
+   
+3. **Connect the MCP server to an MCP client.**
+
+For example, if you wanted to connect this server to Claude Desktop, you would add the following to claude_desktop_config.json:
 
 ```json
 {
   "mcpServers": {
     "contracts": {
-      "command": "/Users/zachlloyd/.local/bin/uv",
+      "command": "[PATH TO UV]", # e.g., "/Users/your-name/.local/bin/uv"
       "args": [
         "run",
         "--directory",
-        "[LOCATION WHERE THIS MCP IS SAVED]", # Replace this with the path for the project's root folder (e.g., "/Users/my-name/contract-analysis-mcp")
+        "[LOCATION WHERE THIS MCP IS SAVED]", # Replace this with the path for the project's root folder (e.g., "/Users/your-name/contract-analysis-mcp")
         "python3",
         "src/rag/server.py"
       ]
@@ -91,7 +116,14 @@ The server exposes five tools:
 
 ## Testing
 
-The project includes four levels of testing:
+The project includes five levels of testing:
+
+**Extraction tests** (`extraction_smoke_test.py` and `extraction_testing.py`) - Tests to ensure the system correctly ingests and extracts text from contracts. To run these, from the src folder run:
+
+```bash
+uv run python3 -m testing.extraction_smoke_test
+uv run python3 -m testing.extraction_testing          
+```
 
 **RAG Smoke tests** (`rag_smoke_test.py`) — Quick functional tests for the clause retrieval functions (querying and listing). To run these, from the src folder run:
 
@@ -111,7 +143,7 @@ uv run python3 -m testing.query_testing
 uv run python3 -m testing.integration_testing
 ```
 
-**Manual end-to-end tests** - In addition to the above automated tests, I also performed extensive manual testing of the MCP after connecting it to Claude. After activating the MCP, I asked Claude the following question sequences:
+**Manual end-to-end tests** - In addition to the above automated tests, I also performed extensive manual testing of the MCP after connecting it to Claude. After activating the MCP, I asked Claude the below question sequences, most of which pertain to a sample collection I created using the CUAD dataset. For the last sequence, I created a separate collection of a few publicly available Silicon Valley Bank contracts, to ensure the server correctly handles multiple collections.
 
 *Sequence 1: Deep Follow-Up Chain*
 1. "What are the termination provisions in the Suntron Corp Maintenance Agreement?"
@@ -143,15 +175,24 @@ uv run python3 -m testing.integration_testing
 3. "Does the Coral Gold Consulting Agreement contain any non-compete restrictions?"
 4. "How does it compare to the merger agreement between Ford and Tesla?"
 
+*Sequence 6: Multiple Collections*
+1. "What are the termination provisions in the Suntron Corp Maintenance Agreement?"
+2. "What about the loan and security agreement between Silicon Valley Bank and Invision?"
+3. "Are there any restrictions on the parties' assignment rights?"
+4. "Has SVB ever agreed to a dollar threshold for cross defaults? If so, what amount is typical?"
+
 ## Design Decisions
 
 - **Chunk size of 256 tokens with 80-token overlap** — chosen to balance retrieval precision (smaller chunks are easier to match) against having enough context for the LLM to produce a useful answer. The overlap helps avoid splitting important clauses across chunk boundaries.
 - **Caching up to 30 contract clauses at a time** — maintains previously retrieved contract clauses to facilitate handling of ambiguous follow-up questions and help multi-turn conversations flow more smoothly.
 - **Separate querying per contract for comparisons** — ensures balanced representation across contracts rather than letting one contract dominate the retrieved results.
 - **ChromaDB for vector storage** — provides persistence and semantic search without the operational overhead of a full client-server database.
+- **Support metadata storage via a metadata.json file** - provides the ability for users to add additional information about their contracts that will help the LLM locate the correct contracts and accurately answer questions about them. This solution is a bit technical and cumbersome, but for now, it is the most straightforward way to implement the ability for users to add this information.
+- **Support ingestion and extraction from .pdf and .docx files** - by far the most common contract types. I would have liked to also include support for older .doc files, but those are a bit trickier to deal with and converting .doc files to .docx files is fairly easy, so for now I think .docx support is sufficient.
 
 ## Future Improvements
 
-- Add support for custom contract databases. As noted in the prior bullet, the real value of this MCP is realized when users can use it with their own contract databases. A valuable future project would be to create a simple way for users to input and format their own database of contracts in a way that is compatible with this MCP. This would require putting the contracts into the same format used by the CUAD dataset.
 - The list_contracts tool is workable for a database with ~500 contracts, which is the size of the CUAD dataset. However, for much larger datasets, it probably wouldn't be workable. Limiting it to listing the first ~50-100 matching contracts would probably be a more robust solution.
 - Add some automated generation testing in addition to the manual testing I described above. This might be complicated but could be accomplished by giving a separate LLM the relevant contract clauses and the client LLM's answer and asking the separate LLM to grade the client's answer on a scale of 1-5 and provide a one-sentence justification for its answer.
+- Add the ability for users to use an LLM to extract contract title and party data. Implementing this would be a bit complex, but would make the process of gathering and uploading metadata much less cumbersome.
+- Add support for other file types (primarily .doc). A bit of a lower priority since the vast majority of contracts will be .pdf and .docx files, which are already supported. But it is still common to find contracts in .doc format, so being able to support those without them needing to be converted would be a nice addition.
