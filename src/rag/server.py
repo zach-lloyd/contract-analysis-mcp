@@ -7,6 +7,7 @@ from rag_core import (
 )
 from uuid import uuid4
 import asyncio
+import json
 
 # For debugging server connection to Claude Desktop
 import sys
@@ -16,24 +17,30 @@ print("server.py: starting imports", file=sys.stderr)
 mcp = FastMCP("contracts")
 
 # In-memory session storage for storing up to 30 previously retrieved clauses.
-session_clauses: dict[str, list[str]] = {}
+# Each session maps to a dict with "clauses" (list of clause dicts) and "seen"
+# (set of (title, excerpt) tuples for O(1) deduplication).
+_sessions: dict[str, dict] = {}
 
 
 def _get_or_create_session(
     session_id: str = None,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[dict], set[tuple]]:
     """
     Retrieve an existing session or create a new one. Centralizes the
     session-lookup logic so ask_contracts and ask_contract stay clean.
 
     Args:
         session_id: An existing session ID, or None to create a new session.
-    """
-    if not session_id or session_id not in session_clauses:
-        session_id = str(uuid4())
-        session_clauses[session_id] = []
 
-    return session_id, session_clauses[session_id]
+    Returns:
+        A tuple of (session_id, clauses list, seen set).
+    """
+    if not session_id or session_id not in _sessions:
+        session_id = str(uuid4())
+        _sessions[session_id] = {"clauses": [], "seen": set()}
+
+    session = _sessions[session_id]
+    return session_id, session["clauses"], session["seen"]
 
 
 @mcp.tool()
@@ -63,11 +70,13 @@ async def ask_contracts(
                     is created.
     """
     try:
-        session_id, clauses = _get_or_create_session(session_id)
+        session_id, clauses, seen = _get_or_create_session(session_id)
         # To keep the context from ballooning, limit the number of previously-retrieved
         # clauses to 30
         if len(clauses) > 30:
             clauses[:] = clauses[-30:]
+            seen.clear()
+            seen.update((c["contract_title"], c["excerpt"]) for c in clauses)
  
         results = await asyncio.to_thread(
             query_clauses, question, NUM_RESULTS, collection_name, None 
@@ -78,16 +87,18 @@ async def ask_contracts(
  
         # Add the retrieved clauses to the stored clauses if they are not already included
         for meta, chunk in zip(metadatas, chunks):
-            title_and_excerpt = f"Contract Title: {meta['contract_title']}\nContract Excerpt: {chunk}\n\n"
+            clause_key = (meta["contract_title"], chunk)
+            if clause_key not in seen:
+                seen.add(clause_key)
+                clauses.append({
+                    "contract_title": meta["contract_title"],
+                    "parties": meta.get("parties", ""),
+                    "excerpt": chunk,
+                })
  
-            if title_and_excerpt not in clauses:
-                clauses.append(title_and_excerpt)
- 
-        header = f"Session ID: {session_id}\n\n"
- 
-        return header + "\n".join(clauses)
+        return json.dumps({"session_id": session_id, "clauses": clauses})
     except Exception as e:
-        return f"Error answering question: {e}"
+        return json.dumps({"error": f"Error answering question: {e}"})
  
  
 @mcp.tool()
@@ -124,17 +135,19 @@ async def ask_contract(
         known_titles = {c["contract_title"] for c in contracts}
  
         if contract_title not in known_titles:
-            return (
-                f"No contract found with title '{contract_title}'. "
-                f"Use the list_contracts tool to see available contract titles."
-            )
+            return json.dumps({
+                "error": f"No contract found with title '{contract_title}'. "
+                         f"Use the list_contracts tool to see available contract titles."
+            })
  
-        session_id, clauses = _get_or_create_session(session_id)
+        session_id, clauses, seen = _get_or_create_session(session_id)
  
-        # To keep the context from balloning, limit the number of previously-retrieved
+        # To keep the context from ballooning, limit the number of previously-retrieved
         # clauses to 30
         if len(clauses) > 30:
             clauses[:] = clauses[-30:]
+            seen.clear()
+            seen.update((c["contract_title"], c["excerpt"]) for c in clauses)
  
         results = await asyncio.to_thread(
             query_clauses, question, NUM_RESULTS, collection_name, contract_title 
@@ -145,16 +158,18 @@ async def ask_contract(
  
         # Add the retrieved clauses to the stored clauses if they are not already included
         for meta, chunk in zip(metadatas, chunks):
-            title_and_excerpt = f"Contract Title: {meta['contract_title']}\nContract Excerpt: {chunk}\n\n"
+            clause_key = (meta["contract_title"], chunk)
+            if clause_key not in seen:
+                seen.add(clause_key)
+                clauses.append({
+                    "contract_title": meta["contract_title"],
+                    "parties": meta.get("parties", ""),
+                    "excerpt": chunk,
+                })
  
-            if title_and_excerpt not in clauses:
-                clauses.append(title_and_excerpt)
- 
-        header = f"Session ID: {session_id}\n\n"
- 
-        return header + "\n".join(clauses)
+        return json.dumps({"session_id": session_id, "clauses": clauses})
     except Exception as e:
-        return f"Error answering question: {e}"
+        return json.dumps({"error": f"Error answering question: {e}"})
  
  
 @mcp.tool()
@@ -180,7 +195,7 @@ async def compare_contracts(
     """
     try:
         if len(contract_titles) < 2:
-            return "Please provide at least two contract titles to compare."
+            return json.dumps({"error": "Please provide at least two contract titles to compare."})
  
         # Validate all titles up front
         contracts = await asyncio.to_thread(
@@ -190,26 +205,28 @@ async def compare_contracts(
  
         invalid = [t for t in contract_titles if t not in known_titles]
         if invalid:
-            return (
-                f"Contract(s) not found: {', '.join(invalid)}. "
-                f"Use the list_contracts tool to see available contract titles."
-            )
+            return json.dumps({
+                "error": f"Contract(s) not found: {', '.join(invalid)}. "
+                         f"Use the list_contracts tool to see available contract titles."
+            })
  
         # Query each contract separately so the results are balanced
         # across contracts rather than skewed toward whichever is most relevant
-        sections = []
+        comparisons = []
         for title in contract_titles:
             results = await asyncio.to_thread(
                 query_clauses, question, NUM_RESULTS, collection_name, title 
             )
             chunks = results["documents"][0]
  
-            excerpts = "\n\n".join(chunks)
-            sections.append(f"=== {title} ===\n{excerpts}")
+            comparisons.append({
+                "contract_title": title,
+                "excerpts": chunks,
+            })
  
-        return "\n\n".join(sections)
+        return json.dumps({"comparisons": comparisons})
     except Exception as e:
-        return f"Error comparing contracts: {e}"
+        return json.dumps({"error": f"Error comparing contracts: {e}"})
  
  
 @mcp.tool()
@@ -238,10 +255,10 @@ async def find_contract_clauses(
             known_titles = {c["contract_title"] for c in contracts}
  
             if contract_title not in known_titles:
-                return (
-                    f"No contract found with title '{contract_title}'. "
-                    f"Use the list_contracts tool to see available contract titles."
-                )
+                return json.dumps({
+                    "error": f"No contract found with title '{contract_title}'. "
+                             f"Use the list_contracts tool to see available contract titles."
+                })
  
         results = await asyncio.to_thread(
             query_clauses, clause_type, NUM_RESULTS, collection_name, contract_title 
@@ -251,18 +268,16 @@ async def find_contract_clauses(
         metadatas = results["metadatas"][0]
  
         if not chunks:
-            return f"No clauses found matching '{clause_type}'."
+            return json.dumps({"clauses": [], "message": f"No clauses found matching '{clause_type}'."})
  
-        formatted = []
-        for meta, chunk in zip(metadatas, chunks):
-            formatted.append(
-                f"Contract: {meta['contract_title']}\n"
-                f"Excerpt: {chunk}"
-            )
+        clauses = [
+            {"contract_title": meta["contract_title"], "excerpt": chunk}
+            for meta, chunk in zip(metadatas, chunks)
+        ]
  
-        return "\n\n---\n\n".join(formatted)
+        return json.dumps({"clauses": clauses})
     except Exception as e:
-        return f"Error finding clauses: {e}"
+        return json.dumps({"error": f"Error finding clauses: {e}"})
  
  
 @mcp.tool()
@@ -289,25 +304,16 @@ async def list_contracts(
  
         if not contracts:
             if party_name:
-                return f"No contracts found involving party '{party_name}'."
+                return json.dumps({
+                    "contracts": [],
+                    "message": f"No contracts found involving party '{party_name}'.",
+                })
  
-            return "No contracts found in the database."
+            return json.dumps({"contracts": [], "message": "No contracts found in the database."})
  
-        formatted = []
-        for c in contracts:
-            line = c["contract_title"]
-            if c["parties"]:
-                line += f" (parties: {c['parties']})"
-            formatted.append(line)
- 
-        header = f"Found {len(contracts)} contract(s)"
-        if party_name:
-            header += f" involving '{party_name}'"
-        header += ":\n"
- 
-        return header + "\n".join(formatted)
+        return json.dumps({"contracts": contracts})
     except Exception as e:
-        return f"Error listing contracts: {e}"
+        return json.dumps({"error": f"Error listing contracts: {e}"})
  
  
 @mcp.tool()
@@ -322,13 +328,11 @@ async def list_collections() -> str:
         names = await asyncio.to_thread(list_all_collections)
  
         if not names:
-            return "No collections found in the database."
+            return json.dumps({"collections": [], "message": "No collections found in the database."})
  
-        header = f"Found {len(names)} collection(s):\n"
-        
-        return header + "\n".join(names)
+        return json.dumps({"collections": names})
     except Exception as e:
-        return f"Error listing collections: {e}"
+        return json.dumps({"error": f"Error listing collections: {e}"})
  
  
 def main():

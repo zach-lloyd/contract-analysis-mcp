@@ -1,4 +1,5 @@
 import asyncio
+import json
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pathlib import Path
@@ -121,12 +122,20 @@ async def run_tests():
                     result = await session.call_tool("list_collections", {})
                     text = get_text(result)
 
-                    if TEST_COLLECTION not in text:
-                        print(f"  [{FAIL}] {name}: primary test collection not listed: {text[:200]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:200]}")
                         return
 
-                    if SECOND_TEST_COLLECTION not in text:
-                        print(f"  [{FAIL}] {name}: secondary test collection not listed: {text[:200]}")
+                    collections = data.get("collections", [])
+
+                    if TEST_COLLECTION not in collections:
+                        print(f"  [{FAIL}] {name}: primary test collection not listed: {collections}")
+                        return
+
+                    if SECOND_TEST_COLLECTION not in collections:
+                        print(f"  [{FAIL}] {name}: secondary test collection not listed: {collections}")
                         return
 
                     print(f"  [{PASS}] {name}: lists both test collections")
@@ -144,14 +153,22 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "INTEGRATION_TEST_ALPHA" not in text:
-                        print(f"  [{FAIL}] {name}: ALPHA missing from results: {text[:200]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:200]}")
                         return
-                    if "INTEGRATION_TEST_BETA" not in text:
-                        print(f"  [{FAIL}] {name}: BETA missing from results: {text[:200]}")
+
+                    titles = {c["contract_title"] for c in data.get("contracts", [])}
+
+                    if "INTEGRATION_TEST_ALPHA" not in titles:
+                        print(f"  [{FAIL}] {name}: ALPHA missing from results: {titles}")
+                        return
+                    if "INTEGRATION_TEST_BETA" not in titles:
+                        print(f"  [{FAIL}] {name}: BETA missing from results: {titles}")
                         return
                     # Make sure the other test collection's data isn't leaking in
-                    if "SECOND_COLLECTION_CONTRACT" in text:
+                    if "SECOND_COLLECTION_CONTRACT" in titles:
                         print(f"  [{FAIL}] {name}: data from other collection leaked in")
                         return
 
@@ -168,10 +185,18 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "INTEGRATION_TEST_ALPHA" not in text:
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:200]}")
+                        return
+
+                    titles = {c["contract_title"] for c in data.get("contracts", [])}
+
+                    if "INTEGRATION_TEST_ALPHA" not in titles:
                         print(f"  [{FAIL}] {name}: ALPHA missing (should match party filter)")
                         return
-                    if "INTEGRATION_TEST_BETA" in text:
+                    if "INTEGRATION_TEST_BETA" in titles:
                         print(f"  [{FAIL}] {name}: BETA shouldn't match 'Test Alpha Corp' party filter")
                         return
 
@@ -187,8 +212,21 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "no contracts found" not in text.lower():
-                        print(f"  [{FAIL}] {name}: expected 'no contracts found', got: {text[:100]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    contracts = data.get("contracts", [])
+                    message = data.get("message", "")
+
+                    if len(contracts) != 0:
+                        print(f"  [{FAIL}] {name}: expected empty contracts list, got {len(contracts)}")
+                        return
+
+                    if "no contracts found" not in message.lower():
+                        print(f"  [{FAIL}] {name}: expected 'no contracts found' message, got: {message}")
                         return
 
                     print(f"  [{PASS}] {name}: correctly reported no contracts found")
@@ -202,10 +240,18 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "INTEGRATION_TEST_ALPHA" in text or "INTEGRATION_TEST_BETA" in text:
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:200]}")
+                        return
+
+                    titles = {c["contract_title"] for c in data.get("contracts", [])}
+
+                    if "INTEGRATION_TEST_ALPHA" in titles or "INTEGRATION_TEST_BETA" in titles:
                         print(f"  [{FAIL}] {name}: primary collection data leaked into secondary")
                         return
-                    if "SECOND_COLLECTION_CONTRACT" not in text:
+                    if "SECOND_COLLECTION_CONTRACT" not in titles:
                         print(f"  [{FAIL}] {name}: secondary collection's contract missing")
                         return
 
@@ -225,21 +271,26 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "Excerpt:" not in text:
-                        print(f"  [{FAIL}] {name}: no excerpts returned: {text[:100]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
                         return
 
-                    # All excerpts should come from the test collection
-                    for line in text.splitlines():
-                        if line.startswith("Contract:"):
-                            returned_title = line.replace("Contract:", "").strip()
-                            if not returned_title.startswith("INTEGRATION_TEST_"):
-                                print(f"  [{FAIL}] {name}: result from outside test "
-                                      f"collection: '{returned_title}'")
-                                return
+                    clauses = data.get("clauses", [])
+                    if len(clauses) == 0:
+                        print(f"  [{FAIL}] {name}: no clauses returned")
+                        return
 
-                    excerpt_count = text.count("Excerpt:")
-                    print(f"  [{PASS}] {name}: got {excerpt_count} excerpts for 'termination'")
+                    # All clauses should come from the test collection
+                    for clause in clauses:
+                        title = clause.get("contract_title", "")
+                        if not title.startswith("INTEGRATION_TEST_"):
+                            print(f"  [{FAIL}] {name}: result from outside test "
+                                  f"collection: '{title}'")
+                            return
+
+                    print(f"  [{PASS}] {name}: got {len(clauses)} clauses for 'termination'")
 
 
                 async def test_find_contract_clauses_filtered(session):
@@ -254,14 +305,19 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    # Every excerpt's "Contract:" label should match the target title
-                    for line in text.splitlines():
-                        if line.startswith("Contract:"):
-                            returned_title = line.replace("Contract:", "").strip()
-                            if returned_title != target:
-                                print(f"  [{FAIL}] {name}: got result from '{returned_title}', "
-                                      f"expected '{target}'")
-                                return
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    # Every clause should match the target title
+                    for clause in data.get("clauses", []):
+                        title = clause.get("contract_title", "")
+                        if title != target:
+                            print(f"  [{FAIL}] {name}: got result from '{title}', "
+                                  f"expected '{target}'")
+                            return
 
                     print(f"  [{PASS}] {name}: all results from '{target}'")
 
@@ -276,8 +332,14 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "no contract found" not in text.lower():
-                        print(f"  [{FAIL}] {name}: expected error message, got: {text[:100]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    if "error" not in data or "no contract found" not in data["error"].lower():
+                        print(f"  [{FAIL}] {name}: expected error with 'no contract found', got: {text[:100]}")
                         return
 
                     print(f"  [{PASS}] {name}: correctly reported contract not found")
@@ -300,25 +362,30 @@ async def run_tests():
                         print(f"  [{FAIL}] {name}: got empty response")
                         return
 
-                    if "Session ID:" not in text:
-                        print(f"  [{FAIL}] {name}: missing Session ID header")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
                         return
 
-                    excerpt_count = text.count("Contract Excerpt:")
-                    if excerpt_count == 0:
-                        print(f"  [{FAIL}] {name}: no contract excerpts returned")
+                    if "session_id" not in data:
+                        print(f"  [{FAIL}] {name}: missing session_id in response")
                         return
 
-                    # All excerpts should be from the test collection
-                    for line in text.splitlines():
-                        if line.startswith("Contract Title:"):
-                            returned_title = line.replace("Contract Title:", "").strip()
-                            if not returned_title.startswith("INTEGRATION_TEST_"):
-                                print(f"  [{FAIL}] {name}: excerpt from outside "
-                                      f"test collection: '{returned_title}'")
-                                return
+                    clauses = data.get("clauses", [])
+                    if len(clauses) == 0:
+                        print(f"  [{FAIL}] {name}: no clauses returned")
+                        return
 
-                    print(f"  [{PASS}] {name}: got {excerpt_count} excerpts with session ID")
+                    # All clauses should be from the test collection
+                    for clause in clauses:
+                        title = clause.get("contract_title", "")
+                        if not title.startswith("INTEGRATION_TEST_"):
+                            print(f"  [{FAIL}] {name}: clause from outside "
+                                  f"test collection: '{title}'")
+                            return
+
+                    print(f"  [{PASS}] {name}: got {len(clauses)} clauses with session_id")
 
 
                 # ----------------------------------------------------------------
@@ -337,25 +404,30 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "Session ID:" not in text:
-                        print(f"  [{FAIL}] {name}: missing Session ID header")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
                         return
 
-                    excerpt_count = text.count("Contract Excerpt:")
-                    if excerpt_count == 0:
-                        print(f"  [{FAIL}] {name}: no contract excerpts returned")
+                    if "session_id" not in data:
+                        print(f"  [{FAIL}] {name}: missing session_id in response")
                         return
 
-                    # Every "Contract Title:" line should reference the target contract
-                    for line in text.splitlines():
-                        if line.startswith("Contract Title:"):
-                            returned_title = line.replace("Contract Title:", "").strip()
-                            if returned_title != target:
-                                print(f"  [{FAIL}] {name}: got excerpt from '{returned_title}', "
-                                      f"expected '{target}'")
-                                return
+                    clauses = data.get("clauses", [])
+                    if len(clauses) == 0:
+                        print(f"  [{FAIL}] {name}: no clauses returned")
+                        return
 
-                    print(f"  [{PASS}] {name}: got {excerpt_count} excerpts, all from '{target}'")
+                    # Every clause should reference the target contract
+                    for clause in clauses:
+                        title = clause.get("contract_title", "")
+                        if title != target:
+                            print(f"  [{FAIL}] {name}: got clause from '{title}', "
+                                  f"expected '{target}'")
+                            return
+
+                    print(f"  [{PASS}] {name}: got {len(clauses)} clauses, all from '{target}'")
 
 
                 async def test_ask_contract_nonexistent_title(session):
@@ -368,8 +440,14 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "no contract found" not in text.lower():
-                        print(f"  [{FAIL}] {name}: expected error message, got: {text[:100]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    if "error" not in data or "no contract found" not in data["error"].lower():
+                        print(f"  [{FAIL}] {name}: expected error with 'no contract found', got: {text[:100]}")
                         return
 
                     print(f"  [{PASS}] {name}: correctly reported contract not found")
@@ -388,7 +466,13 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "no contract found" not in text.lower():
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    if "error" not in data or "no contract found" not in data["error"].lower():
                         print(f"  [{FAIL}] {name}: should not find contract from other "
                               f"collection, got: {text[:150]}")
                         return
@@ -416,13 +500,21 @@ async def run_tests():
                         print(f"  [{FAIL}] {name}: got empty response")
                         return
 
-                    # Both contract titles should appear as section headers
-                    missing = [t for t in titles if f"=== {t} ===" not in text]
-                    if missing:
-                        print(f"  [{FAIL}] {name}: missing section headers for {missing}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
                         return
 
-                    print(f"  [{PASS}] {name}: got clause sections for both contracts")
+                    comparisons = data.get("comparisons", [])
+                    returned_titles = {c["contract_title"] for c in comparisons}
+
+                    missing = [t for t in titles if t not in returned_titles]
+                    if missing:
+                        print(f"  [{FAIL}] {name}: missing comparisons for {missing}")
+                        return
+
+                    print(f"  [{PASS}] {name}: got comparisons for both contracts")
 
 
                 async def test_compare_contracts_too_few_titles(session):
@@ -436,8 +528,14 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "at least two" not in text.lower():
-                        print(f"  [{FAIL}] {name}: expected 'at least two' error, got: {text[:100]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    if "error" not in data or "at least two" not in data["error"].lower():
+                        print(f"  [{FAIL}] {name}: expected error with 'at least two', got: {text[:100]}")
                         return
 
                     print(f"  [{PASS}] {name}: correctly requires at least two contracts")
@@ -454,8 +552,14 @@ async def run_tests():
                     })
                     text = get_text(result)
 
-                    if "not found" not in text.lower():
-                        print(f"  [{FAIL}] {name}: expected 'not found' error, got: {text[:100]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        print(f"  [{FAIL}] {name}: response is not valid JSON: {text[:100]}")
+                        return
+
+                    if "error" not in data or "not found" not in data["error"].lower():
+                        print(f"  [{FAIL}] {name}: expected error with 'not found', got: {text[:100]}")
                         return
 
                     print(f"  [{PASS}] {name}: correctly reported contract not found")
